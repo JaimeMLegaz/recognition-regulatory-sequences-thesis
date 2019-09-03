@@ -1,6 +1,6 @@
 # Deep recognition of regulatory sequences
 
-This is the project corresponding to the final thesis of the student Jaime Martínez Legaz at the University of Murcia. Here you can find the Markdown scripts that were used in order to work in this thesis and generate the results that appear in it.
+This is the project corresponding to the final thesis of the student Jaime Martínez Legaz at the University of Murcia "Deep recognition of regulatory DNA sequences with applications in disease detection. Here you can find the Markdown scripts that were used in order to work in this thesis and generate the results that appear in it.
 
 By downloading all these Markdowns, anyone can replicate what we did and get the results we got. You only need to instal Rstudio and all the packages required by the libraries we work with, in addition to the package developed by said student that will be used when treating the sequences. To use that R package, it is only needed to write in the R console the following commands:
 
