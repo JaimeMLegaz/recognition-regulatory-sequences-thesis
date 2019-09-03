@@ -1,0 +1,82 @@
+---
+title: "Treatment of sequences for the Promoters experiment"
+author: "Jaime Martínez Legaz"
+output: html_document
+---
+
+## Initial setup
+
+Loading all required libraries
+
+```{r}
+library(SetupSequences)
+```
+
+## Treating the sequences
+
+First, we recover the sequences we obtained with ensembl.
+
+```{r}
+PosSequences <- read.csv("Data/Promoters/PositivePromoterSequences_untreated")
+NegSequences <- read.csv("Data/Promoters/NegativePromoterSequences_untreated")
+```
+
+The format is a bit different from what we look for. We have to change the type of the columns, since we are working with characters, not factors.
+
+```{r}
+
+PosSequences$hgnc_symbol <- as.character(PosSequences$hgnc_symbol)
+PosSequences$coding_gene_flank <- as.character(PosSequences$coding_gene_flank)
+
+NegSequences$hgnc_symbol <- as.character(NegSequences$hgnc_symbol)
+NegSequences$coding_gene_flank <- as.character(NegSequences$coding_gene_flank)
+
+```
+
+Next we start with the treatment of sequences. We have to:
+
+- Reverse them
+- One-hot encode them
+
+For that, we need some functions from the custom package developed for this project.
+
+```{r}
+# Example of sequence: AACCGT
+PosSequences$coding_gene_flank[1]  # Example of a positive sequence
+NegSequences$coding_gene_flank[1]  # Example of a negative sequence
+
+# strReverse:  AACCGT --> TGCCAA
+PosSequences$coding_gene_flank <- strReverse(PosSequences$coding_gene_flank)
+NegSequences$coding_gene_flank <- strReverse(NegSequences$coding_gene_flank)
+
+PosSequences$coding_gene_flank[1]  # The positive sequence, once reversed
+NegSequences$coding_gene_flank[1]  # The negative sequence, once reversed
+
+# to_onehot:   TGCCAA --> 0001000100010001000010000    (A = 10000, C = 01000, G = 00100, T = 00010, X = 00001)
+PosSequences$coding_gene_flank <- to_onehot(PosSequences$coding_gene_flank)
+NegSequences$coding_gene_flank <- to_onehot(NegSequences$coding_gene_flank)
+
+PosSequences$coding_gene_flank[1]  # The positive sequence, once reversed and one-hot encoded
+NegSequences$coding_gene_flank[1]  # The negative sequence, once reversed and one-hot encoded
+
+# Final check: Since some of the sequences might be corrupt, we will delete the ones that are corrupt, if they exist
+# We can know if a sequence is corrupt by looking for the W character. When one-hot encoding, we encoded everything that was not an A, T, C or G with a "W"
+
+if (any(grepl("W",PosSequences$coding_gene_flank)))
+  PosSequences <- PosSequences[-which(grepl("W",PosSequences$coding_gene_flank)),]
+
+if (any(grepl("W",NegSequences$coding_gene_flank)))
+  NegSequences <- NegSequences[-which(grepl("W",NegSequences$coding_gene_flank)),]
+```
+
+Once treated, we can save them in a file for later use.
+
+```{r}
+write.csv(PosSequences,file="Data/Promoters/PositivePromoterSequences_treated", row.names = FALSE, quote = FALSE)
+write.csv(NegSequences,file="Data/Promoters/NegativePromoterSequences_treated", row.names = FALSE, quote = FALSE)
+
+seqProm <- append(PosSequences$coding_gene_flank,NegSequences$coding_gene_flank)
+fileCon<-file("Data/Promoters/SeqProm")
+write.table(seqProm,file = fileCon, quote=FALSE, row.names = FALSE, col.names = FALSE)
+```
+

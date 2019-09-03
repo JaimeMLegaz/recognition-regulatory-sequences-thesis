@@ -1,0 +1,47 @@
+---
+title: "Obtaining Promoter sequences for Promoters experiment"
+author: "Jaime Martínez Legaz"
+output: html_document
+---
+
+## Initial setup
+
+Loading all required libraries
+
+```{r}
+library(biomaRt)
+```
+
+## Obtaining the sequences
+
+First of all, we have to connect to ensembl.
+
+```{r}
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", GRCh=37)
+```
+
+Then, we ask ensembl for the positive and negative Promoter sequences.
+
+```{r}
+
+PosGenes <- scan(file = "Data/PositiveGenes", what = "raw") # A file containing the positive genes
+PosSequences <- getSequence(id = PosGenes, upstream = 250, type = "hgnc_symbol", seqType = "coding_gene_flank", mart = ensembl)
+
+NegGenes <- scan(file = "Data/NegativeGenes", what = "raw") # A file containing 764 specific negative genes
+NegSequences <- getSequence(id = NegGenes, upstream = 250, type = "hgnc_symbol", seqType = "coding_gene_flank", mart = ensembl)
+
+```
+
+Some of this sequences appear as unavailable. We have to remove those rows.
+
+``` {r}
+PosSequences <- PosSequences[-which(PosSequences$coding_gene_flank == "Sequence unavailable"),]
+```
+
+Finally, we can save our data into some files for their later use.
+
+```{r}
+write.csv(PosSequences,file="Data/Promoters/PositivePromoterSequences_untreated", row.names = FALSE, quote = FALSE)
+write.csv(NegSequences,file="Data/Promoters/NegativePromoterSequences_untreated", row.names = FALSE, quote = FALSE)
+```
+

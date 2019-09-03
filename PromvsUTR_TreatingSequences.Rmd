@@ -1,0 +1,88 @@
+---
+title: "Treatment of sequences for the Promoters vs UTR experiment"
+author: "Jaime Martínez Legaz"
+output: html_document
+---
+
+## Initial setup
+
+Loading all required libraries
+
+```{r}
+library(SetupSequences)
+```
+
+## Treating the sequences
+
+First, we recover the sequences we obtained with ensembl.
+
+```{r}
+PromSequences <- read.csv("Data/PromvsUTR/PromoterSequences_untreated")
+UTRSequences <- read.csv("Data/PromvsUTR/UTRSequences_untreated")
+```
+
+The format is a bit different from what we look for. We have to change the type of the columns, since we are working with characters, not factors.
+
+```{r}
+
+PromSequences$hgnc_symbol <- as.character(PromSequences$hgnc_symbol)
+PromSequences$coding_gene_flank <- as.character(PromSequences$coding_gene_flank)
+
+UTRSequences$hgnc_symbol <- as.character(UTRSequences$hgnc_symbol)
+UTRSequences$X5utr <- as.character(UTRSequences$X5utr)
+
+```
+
+Next we start with the treatment of sequences. We have to:
+
+- Reverse them
+- Make sure all sequences are 250 characters long (shorter UTR sequences have already been discarded, though)
+- One-hot encode them
+
+For that, we need some functions from the custom package developed for this project.
+
+```{r}
+# Example of sequence: AACCGT
+PromSequences$coding_gene_flank[1]  # Example of a Promoter sequence
+UTRSequences$X5utr[1]  # Example of a UTR sequence
+
+# strReverse:  AACCGT --> TGCCAA
+PromSequences$coding_gene_flank <- strReverse(PromSequences$coding_gene_flank)
+UTRSequences$X5utr <- strReverse(UTRSequences$X5utr)
+
+PromSequences$coding_gene_flank[1]  # The promoter sequence, once reversed
+UTRSequences$X5utr[1]  # The UTR sequence, once reversed
+
+# padding_sequences: Inserts padding characters in sequences shorter than 250 characters, and trims sequences longer than 250 characters
+UTRSequences$X5utr <- padding_sequences(UTRSequences$X5utr)  
+
+UTRSequences$X5utr[1]  # The UTR sequence, trimmed to be 250 characters long
+nchar(UTRSequences$X5utr[1])  # Length of said UTR sequence
+
+# to_onehot:   TGCCAA --> 0001000100010001000010000    (A = 10000, C = 01000, G = 00100, T = 00010, X = 00001)
+PromSequences$coding_gene_flank <- to_onehot(PromSequences$coding_gene_flank)
+UTRSequences$X5utr <- to_onehot(UTRSequences$X5utr)
+
+PromSequences$coding_gene_flank[1]  # The promoter sequence, once reversed and one-hot encoded
+UTRSequences$X5utr[1]  # The UTR sequence, once reversed, trimmed and one-hot encoded
+
+# Final check: Since some of the sequences might be corrupt, we will delete the ones that are corrupt, if they exist
+# We can know if a sequence is corrupt by looking for the W character. When one-hot encoding, we encoded everything that was not an A, T, C or G with a "W"
+
+if (any(grepl("W",UTRSequences$X5utr)))
+  UTRSequences <- UTRSequences[-which(grepl("W",UTRSequences$X5utr)),]
+
+if (any(grepl("W",PromSequences$coding_gene_flank)))
+  PromSequences <- PromSequences[-which(grepl("W",PromSequences$coding_gene_flank)),]
+```
+
+Once treated, we can save them in a file for later use.
+
+```{r}
+write.csv(PromSequences,file="Data/PromvsUTR/PromoterSequences_treated", row.names = FALSE, quote = FALSE)
+write.csv(UTRSequences,file="Data/PromvsUTR/UTRSequences_treated", row.names = FALSE, quote = FALSE)
+
+write.table(PromSequences$coding_gene_flank,file="Data/PromvsUTR/PromoterSequences_sequences_treated", row.names = FALSE, quote = FALSE, col.names = FALSE)
+write.table(UTRSequences$X5utr,file="Data/PromvsUTR/UTRSequences_sequences_treated", row.names = FALSE, quote = FALSE, col.names = FALSE)
+```
+

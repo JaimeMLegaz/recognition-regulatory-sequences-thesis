@@ -1,0 +1,91 @@
+---
+title: "Obtain UTR and Promoter sequences for Promoter vs UTR experiment"
+author: "Jaime Martínez Legaz"
+output: html_document
+---
+
+## Initial setup
+
+Loading all required libraries
+
+```{r}
+library(biomaRt)
+```
+
+## Obtaining the sequences
+
+First of all, we have to connect to ensembl.
+
+```{r}
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", GRCh=37)
+```
+
+Then, we ask ensembl for the UTR sequences.
+
+```{r}
+genesP <- scan(file = "Data/PositiveGenes", what = "raw") # Contains only the positive genes
+genesN <- scan(file = "Data/allGenes", what = "raw") # Contains ALL genes that synthetize protein 
+
+genesN <- genesN[-which(genesN %in% genesP)] # We remove the negative genes present in the positive list
+
+PosSequences <- getBM(attributes = c("ensembl_gene_id","5utr"),
+                       filters = "hgnc_symbol",
+                       values = genesP,
+                       mart = ensembl)
+NegSequences<- getBM(attributes = c("ensembl_gene_id","5utr"),
+                      filters = "hgnc_symbol",
+                      values = genesN,
+                      mart = ensembl)
+```
+
+Some of this sequences appear as unavailable. We have to remove those rows. We will also remove, a second time, just to be 100% sure, the positive genes that still appear in the negatives list.
+
+```{r}
+PosSequences <- PosSequences[!(PosSequences$`5utr` == "Sequence unavailable"),]
+NegSequences <- NegSequences[!(NegSequences$`5utr` == "Sequence unavailable"),] 
+
+# We remove positive genes from the negative list
+NegSequences <- NegSequences[-which(NegSequences$ensembl_gene_id %in% PosSequences$ensembl_gene_id),]
+```
+
+There are also certain sequences coincidentally shared between the positive and negative list. Since we do not want to give our network mixed signals, we will remove them from the negatives set (some of them might be hidden positive sequences, so keeping them might result in worse performances).
+
+For that, we need to stablish which are these shared sequences. We will achieve that here:
+
+```{r}
+pos <- PosSequences
+neg <- NegSequences
+
+shared <- data.frame(positive=integer(), negative=integer())
+```
+```{r, echo=FALSE, eval=FALSE}
+pos$shared <- 0
+
+for (i in 1:nrow(pos)){
+  for (j in 1:nrow(neg)){
+    if (pos[i,]$`5utr` == neg[j,]$`5utr`){
+      pos[i,]$shared <- pos[i,]$shared + 1
+      shared[nrow(shared)+1,] <- list(i,j)
+    }
+  }
+}
+```
+
+This is a very long process, so we will include the list of shared sequences in a file. With that list, we can remove those sequences from the negatives set:
+
+```{r}
+shared <- read.csv(file="Data/UTR/dataframeShared")
+
+negShared_nonDup <- shared$negative
+negShared_nonDup <- negShared_nonDup[-which(duplicated(negShared_nonDup))] # Since the same row may appear more than once
+
+NegSequences <- NegSequences[-negShared_nonDup,]
+```
+
+Finally, we can save our data into some files for their later use.
+
+```{r}
+write.csv(PosSequences,file="Data/UTR/PositiveUTRSequences_untreated", row.names = FALSE, quote = FALSE)
+write.csv(NegSequences,file="Data/UTR/NegativeUTRSequences_untreated", row.names = FALSE, quote = FALSE)
+```
+

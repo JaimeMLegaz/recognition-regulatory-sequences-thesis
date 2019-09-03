@@ -1,0 +1,51 @@
+---
+title: "Obtain UTR and Promoter sequences for Promoter vs UTR experiment"
+author: "Jaime Martínez Legaz"
+output: html_document
+---
+
+## Initial setup
+
+Loading all required libraries
+
+```{r}
+library(biomaRt)
+```
+
+## Obtaining the sequences
+
+First of all, we have to connect to ensembl.
+
+```{r}
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", GRCh=37)
+```
+
+Then, we ask ensembl for the Promoter and UTR sequences.
+
+```{r}
+allGenes <- scan(file = "Data/allGenes", what = "raw") # There must be a txt file called "allGenes" with all the genes inside
+
+PromSequences <- getSequence(id = allGenes, upstream = 250, type = "hgnc_symbol", seqType = "coding_gene_flank", mart = ensembl)
+UTRSequences <- getBM(attributes = c("hgnc_symbol","5utr"),
+                filters = "hgnc_symbol",
+                values = allGenes,
+                mart = ensembl)
+```
+
+Some of this sequences appear as unavailable. We have to remove those rows, and also other empty rows. For the UTR sequences, we only want those longer than 250 characters, so that we do not have to apply padding to those sequences.
+
+```{r}
+PromSequences <- PromSequences[-which(PromSequences$coding_gene_flank == "Sequence unavailable"),]
+UTRSequences <- UTRSequences[-which(UTRSequences$`5utr` == "Sequence unavailable"),]
+
+PromSequences <- PromSequences[-which(nchar(PromSequences$coding_gene_flank) != 250),]
+UTRSequences <- UTRSequences[-which(nchar(UTRSequences$`5utr`) < 250),]
+```
+
+Finally, we can save our data into some files for their later use.
+
+```{r}
+write.csv(PromSequences,file="Data/PromvsUTR/PromoterSequences_untreated", row.names = FALSE, quote = FALSE)
+write.csv(UTRSequences,file="Data/PromvsUTR/UTRSequences_untreated", row.names = FALSE, quote = FALSE)
+```
+

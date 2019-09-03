@@ -1,0 +1,177 @@
+---
+title: "Training the network of the Promoters vs UTR experiment"
+author: "Jaime Martínez Legaz"
+date: "February 14, 2019"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Initial Setup
+
+Loading all required libraries
+
+```{r}
+library(keras)
+library(caret)
+```
+
+## Setting the data up
+
+First we have to recover the treated data.
+
+```{r}
+SeqPromo <- scan(file="Data/PromvsUTR/PromoterSequences_sequences_treated", what="character")
+SeqUTR <- scan(file="Data/PromvsUTR/UTRSequences_sequences_treated", what="character")
+```
+
+We have much more UTR sequences than promoter sequences. Since we want our classes to be balanced for a easier train, we will select a sample of the UTR set, and work with the same number of sequences for both classes.
+
+```{r}
+
+subseqUTR <- sample(SeqUTR,size=length(SeqPromo))
+
+```
+
+Now we face an issue with our sequences. They are 1250 characters long strings, but R sees them as indivisible elements. We have to transform them before working with them, turning each 1250 characters long sequence into 1250 sequences of only one character.
+
+```{r}
+n2 <- nchar(SeqPromo[1]) -1 # Number of divisions to make
+
+ps <- sapply(1 + 1*0:n2, function(z) substr(SeqPromo, z, z))  # Obtaining the split characters
+dfProm <- data.frame(ps, "Value" = 1) # Saving them into a dataframe
+indx <- sapply(dfProm, is.factor) 
+dfProm[indx] <- lapply(dfProm[indx], function(x) as.character(x))  # Factor --> char conversion
+
+us <- sapply(1 + 1*0:n2, function(z) substr(subseqUTR, z, z))  # Obtaining the split characters
+dfUTR <- data.frame(us, "Value" = 0) # Saving them into a dataframe
+indx <- sapply(dfUTR, is.factor) 
+dfUTR[indx] <- lapply(dfUTR[indx], function(x) as.character(x))  # Factor --> char conversion
+
+df <- rbind(dfProm,dfUTR)
+```
+
+
+Now we have to divide our data into Training and Test for our model training. The divisions have to have the same propotion the data had.
+
+```{r}
+
+
+output <- c("Value")
+partition <- createDataPartition(df[[output]],
+                                      p = 0.8,
+                                      list = FALSE,
+                                      times = 1)
+
+data.Train <- df[partition,]
+data.Test <- df[-partition,]
+
+
+# We can check these divisions have the same proportion of values the full dataframe had (results in %)
+prop.table(table(data.Train$Value))*100
+prop.table(table(data.Test$Value))*100
+prop.table(table(df$Value))*100
+```
+
+Once divided, we have to adapt the data to the format the model expects.
+
+```{r}
+inData.Train.x <- data.matrix(data.Train[,1:1250])
+inData.Train.y <- data.matrix(data.Train[,1251])
+
+inData.Test.x <- data.matrix(data.Test[,1:1250])
+inData.Test.y <- data.matrix(data.Test[,1251])
+
+inData.Train.x <- array_reshape(inData.Train.x, c(length(inData.Train.x) / 1250, 1250, 1))
+inData.Test.x <- array_reshape(inData.Test.x, c(length(inData.Test.x) / 1250, 1250, 1))
+```
+
+
+Now it is time to build our model. It follows the specifications mentioned in the thesis report. 
+
+```{r}
+batch_size <- 125 
+epochs <- 30 
+input_shape <- c(1250,1)
+learn_rate = 0.0001
+
+set.seed(1337)
+
+modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+  layer_conv_1d(filters = 48, kernel_size = 24, activation = "relu", input_shape = input_shape)%>%
+  layer_flatten() %>%
+    layer_dense(units = 50, activation = 'relu') %>% 
+  layer_dense(units = 1, activation="sigmoid") %>% 
+  
+  summary(model)
+  
+  modelConvolu %>% compile(
+  loss = loss_binary_crossentropy,
+  optimizer = optimizer_nadam(lr = learn_rate),
+  metrics = c('accuracy')
+)
+```
+
+And now we train that model with the data obtained. After each training epoch, we will obtain certain statistics related to the sensitivity and specificity of the model, since they are not metrics that Keras can return from the model.
+
+```{r}
+sens <- NULL
+spec <- NULL
+
+for (ij in 1:epochs){
+  history <- 
+  c(history, modelConvolu %>% fit(
+  x = inData.Train.x,
+  y = inData.Train.y,
+  epochs = 1,  
+  batch_size = batch_size, 
+  validation_data = list(inData.Test.x, inData.Test.y),
+  verbose = 2))
+
+## Prediction 
+pred <- modelConvolu %>% predict(inData.Test.x, batch_size = batch_size)
+prediction.y = round(pred)
+# Confusion matrix
+CM = table(prediction.y, inData.Test.y)
+CM
+sens <- c(sens,sensitivity(CM))
+spec <- c(spec,specificity(CM))
+  
+}
+
+```
+
+Lastly, we will plot the graphs showing the results of the training of this model.
+
+```{r, interpretandoDatos}
+nums <- NULL
+nums <- (1:epochs)*2
+valaccs <- NULL
+accs <- NULL
+valoss <- NULL
+loss <- NULL
+for (i in nums){ 
+  valaccs <- c(valaccs,history[i+1]$metrics$val_acc) 
+  accs <- c(accs,history[i+1]$metrics$acc) 
+  loss <- c(loss,history[i+1]$metrics$loss) 
+  valoss <- c(valoss,history[i+1]$metrics$val_loss) 
+  }
+
+plot(valoss, ylim = c(min(valoss,loss), max(valoss,loss)), cex = 0, xlim = c(0,epochs), ylab="loss", xlab="epochs")
+lines(valoss, col="green")
+lines(loss, col="blue")
+legend("bottomleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+
+plot(valaccs, ylim = c(min(valaccs,accs), max(valaccs,accs)), cex = 0, xlim = c(0,epochs), ylab = "accuracy", xlab = "epochs")
+lines(valaccs, col="green")
+lines(accs, col="blue")
+legend("topleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+plot(sens, ylim = c(min(sens, spec, sens + spec - 1), max(sens, spec, sens+spec-1)), cex = 0)
+lines(sens,col="red")
+lines(spec,col="blue")
+lines((sens + spec) -1, col="orange")
+legend("bottomright", legend=c("Specificity","Sensitivity", "Youden"), col=c("blue","red", "orange"), lty = 1)
+```

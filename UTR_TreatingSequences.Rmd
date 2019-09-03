@@ -1,0 +1,93 @@
+---
+title: "Treatment of sequences for the Promoters experiment"
+author: "Jaime Martínez Legaz"
+output: html_document
+---
+
+## Initial setup
+
+Loading all required libraries
+
+```{r}
+library(SetupSequences)
+```
+
+## Treating the sequences
+
+First, we recover the sequences we obtained with ensembl.
+
+```{r}
+PosSequences <- read.csv("Data/UTR/PositiveUTRSequences_untreated")
+NegSequences <- read.csv("Data/UTR/NegativeUTRSequences_untreated")
+```
+
+The format is a bit different from what we look for. We have to change the type of the columns, since we are working with characters, not factors.
+
+```{r}
+
+PosSequences$ensembl_gene_id <- as.character(PosSequences$ensembl_gene_id)
+PosSequences$X5utr <- as.character(PosSequences$X5utr)
+
+NegSequences$ensembl_gene_id <- as.character(NegSequences$ensembl_gene_id)
+NegSequences$X5utr <- as.character(NegSequences$X5utr)
+
+```
+
+Next we start with the treatment of sequences. We have to:
+
+- Reverse them
+- Make sure all sequences are 250 characters long
+- One-hot encode them
+
+For that, we need some functions from the custom package developed for this project.
+
+```{r}
+# Example of sequence: AACCGT
+PosSequences$X5utr[1]  # Example of a positive sequence
+NegSequences$X5utr[1]  # Example of a negative sequence
+
+# strReverse:  AACCGT --> TGCCAA
+PosSequences$X5utr <- strReverse(PosSequences$X5utr)
+NegSequences$X5utr <- strReverse(NegSequences$X5utr)
+
+PosSequences$X5utr[1]  # The positive sequence, once reversed
+NegSequences$X5utr[1]  # The negative sequence, once reversed
+
+# padding_sequences: Inserts padding characters ("X") in sequences shorter than 250 characters, and trims sequences longer than 250 characters
+PosSequences$X5utr <- padding_sequences(PosSequences$X5utr)
+NegSequences$X5utr <- padding_sequences(NegSequences$X5utr)
+
+PosSequences$X5utr[1]  # The positive sequence, with some characters added so it can be 250 characters long
+NegSequences$X5utr[1]  # The negative sequence, trimmed so it becomes 250 characters long
+
+# to_onehot:   TGCCAA --> 00010010010010001000    (A = 1000, C = 0100, G = 0010, T = 0001)
+PosSequences$X5utr <- to_onehot(PosSequences$X5utr)
+NegSequences$X5utr <- to_onehot(NegSequences$X5utr)
+
+PosSequences$X5utr[1]  # The positive sequence, reversed, padded and one-hot encoded
+NegSequences$X5utr[1]  # The negative sequence, reversed, trimmed and one-hot encoded
+
+# Final check: Since some of the sequences might be corrupt, we will delete the ones that are corrupt, if they exist
+# We can know if a sequence is corrupt by looking for the W character. When one-hot encoding, we encoded everything that was not an A, T, C or G with a "W"
+
+if (any(grepl("W",PosSequences$X5utr)))
+  PosSequences <- PosSequences[-which(grepl("W",PosSequences$X5utr)),]
+
+if (any(grepl("W",NegSequences$X5utr)))
+  NegSequences <- NegSequences[-which(grepl("W",NegSequences$X5utr)),]
+```
+
+Once treated, we can save them in a file for later use.
+
+```{r}
+write.csv(PosSequences,file="Data/UTR/PositiveUTRSequences_treated", row.names = FALSE, quote = FALSE)
+write.csv(NegSequences,file="Data/UTR/NegativeUTRSequences_treated", row.names = FALSE, quote = FALSE)
+
+write.table(PosSequences$X5utr,file="Data/UTR/PositiveUTRSequences_sequences_treated", row.names = FALSE, quote = FALSE, col.names = FALSE)
+write.table(NegSequences$X5utr,file="Data/UTR/NegativeUTRSequences_sequences_treated", row.names = FALSE, quote = FALSE, col.names = FALSE)
+
+seqUTR <- append(PosSequences$X5utr,NegSequences$X5utr)
+fileCon<-file("Data/UTR/SeqUTR")
+write.table(seqUTR,file = fileCon, quote=FALSE, row.names = FALSE, col.names = FALSE)
+```
+

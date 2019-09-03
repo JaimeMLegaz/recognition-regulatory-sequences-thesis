@@ -1,0 +1,176 @@
+---
+title: "Training the network of the Promoters experiment"
+author: "Jaime Martínez Legaz"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Initial Setup
+
+Loading all required libraries
+
+```{r}
+library(keras)
+library(caret)
+```
+
+## Setting the data up
+
+First we have to recover the treated data.
+
+```{r}
+SeqProm <- scan(file="Data/Promoters/SeqProm",what="character")
+```
+
+Now we face an issue with our sequences. They are 1250 characters long strings, but R sees them as indivisible elements. We have to transform them before working with them, turning each 1250 characters long sequence into 1250 sequences of only one character.
+
+```{r}
+posNum <- 715 # There are 715 positive sequences
+
+n2 <- nchar(SeqProm[1]) -1 # Number of divisions to make
+
+secuenciasOH <- sapply(1 + 1*0:n2, function(z) substr(SeqProm, z, z))  # Obtaining the split characters
+df <- data.frame(secuenciasOH, "Value" = 0) # Saving them into a dataframe
+indx <- sapply(df, is.factor) 
+df[indx] <- lapply(df[indx], function(x) as.character(x)) # Factor --> char conversion
+
+df[1:posNum,]$Value <- 1 # We have the value of the positive sequences to positive
+```
+
+Now we have to divide our data into Training and Test for our model training. We will also check the proportions are the same as before the division.
+
+```{r}
+
+output <- c("Value")
+partition <- createDataPartition(df[[output]],
+                                      p = 0.8,
+                                      list = FALSE,
+                                      times = 1)
+
+data.Train <- df[partition,]
+data.Test <- df[-partition,]
+
+
+# These all should be more or less the same
+prop.table(table(data.Train$Value))*100
+prop.table(table(data.Test$Value))*100
+prop.table(table(df$Value))*100
+
+```
+
+Once divided, we have to adapt the data to the format the model expects.
+
+```{r}
+inData.Train.x <- data.matrix(data.Train[,1:1250])
+inData.Train.y <- data.matrix(data.Train[,1251])
+
+inData.Test.x <- data.matrix(data.Test[,1:1250])
+inData.Test.y <- data.matrix(data.Test[,1251])
+
+inData.Train.x <- array_reshape(inData.Train.x, c(nrow(data.Train), 1250, 1))
+inData.Test.x <- array_reshape(inData.Test.x, c(nrow(data.Test), 1250, 1))
+
+```
+
+Now it is time to build our model. It follows the specifications mentioned in the thesis report. 
+
+```{r}
+batch_size <- 10 
+epochs <- 120 
+input_shape <- c(1250,1)
+learn_rate = 0.0003
+
+set.seed(1337)
+
+modelConvol <- keras_model_sequential()
+  modelConvol %>% 
+  layer_conv_1d(filters = 30, kernel_size = 24, activation = "relu", input_shape = input_shape)%>%
+  layer_conv_1d(filters = 30, kernel_size = 24, activation = "relu")%>%
+  layer_max_pooling_1d() %>%
+  layer_flatten() %>%
+  layer_dense(units = 50, activation = 'relu') %>% 
+  layer_dense(units = 1, activation="sigmoid") %>% # 1
+  
+  summary(model)
+  
+  modelConvol %>% compile(
+  loss = loss_binary_crossentropy,
+  optimizer = optimizer_nadam(lr = learn_rate),
+  metrics = c('accuracy')
+)
+```
+
+And now we train that model with the data obtained. After each training epoch, we will obtain certain statistics related to the sensitivity and specificity of the model, since they are not metrics that Keras can return from the model.
+
+```{r}
+
+  sens <- NULL
+  spec <- NULL
+  history <- NULL
+
+for (epoch in 1:epochs){
+  history <- 
+  c(history, modelConvol %>% fit(
+  x = inData.Train.x,
+  y = inData.Train.y,
+  epochs = 1,  
+  batch_size = batch_size, 
+  validation_data = list(inData.Test.x, inData.Test.y),
+  verbose = 2))
+
+## Prediccion 
+pred <- modelConvol %>% predict(inData.Test.x, batch_size = batch_size)
+prediction.y = round(pred)
+# Confusion matrix
+CM = table(prediction.y, inData.Test.y)
+if (length(CM) > 2){
+      sens <- c(sens,sensitivity(CM))
+      spec <- c(spec,specificity(CM))
+    }
+    else {  # This happens in the weird cases the model only predicts positive or negative
+      if (sum(grepl(0,prediction.y)) > 0){
+        sens <- c(sens, 0)
+        spec <- c(spec, 1)
+      }
+      else{
+        sens <- c(sens, 0)
+        spec <- c(spec, 1)
+      }
+    }
+}
+```
+
+Lastly, we will plot the graphs showing the results of the training of this model.
+
+```{r, interpretandoDatos}
+nums <- NULL
+nums <- (1:epochs)*2
+valaccs <- NULL
+accs <- NULL
+valoss <- NULL
+loss <- NULL
+for (i in nums){ 
+  valaccs <- c(valaccs,history[i]$metrics$val_acc) 
+  accs <- c(accs,history[i]$metrics$acc) 
+  loss <- c(loss,history[i]$metrics$loss) 
+  valoss <- c(valoss,history[i]$metrics$val_loss) 
+  }
+
+plot(valoss, ylim = c(min(valoss,loss), max(valoss,loss)), cex = 0, xlim = c(0,epochs), ylab="loss", xlab="epochs")
+lines(valoss, col="green")
+lines(loss, col="blue")
+legend("bottomleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+
+plot(valaccs, ylim = c(min(valaccs,accs), max(valaccs,accs)), cex = 0, xlim = c(0,epochs), ylab = "accuracy", xlab = "epochs")
+lines(valaccs, col="green")
+lines(accs, col="blue")
+legend("topleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+plot(sens, ylim = c(min(sens, spec, sens + spec - 1), max(sens, spec, sens+spec-1)), cex = 0)
+lines(sens,col="red")
+lines(spec,col="blue")
+lines((sens + spec) -1, col="orange")
+legend("topright", legend=c("Specificity","Sensitivity", "Youden"), col=c("blue","red", "orange"), lty = 1)
+```
