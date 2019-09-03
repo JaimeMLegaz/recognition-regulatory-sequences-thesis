@@ -1,4 +1,4 @@
-### Deep recognition of regulatory sequences
+# Deep recognition of regulatory sequences
 
 This is the project corresponding to the final thesis of the student Jaime Martínez Legaz at the University of Murcia. Here you can find the Markdown scripts that were used in order to work in this thesis and generate the results that appear in it.
 
