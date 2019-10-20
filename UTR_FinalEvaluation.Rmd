@@ -1,0 +1,384 @@
+---
+title: "Training the network of the UTR experiment"
+author: "Jaime Martínez Legaz"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Initial notes
+
+This evaluation only modifies the third part of the experiment, the training. But, since it needs some data from the first part, and R has some problems writing and reading .csv files containing very big numbers (such us our treated sequences), we will have to do the three steps in the same file for it to work properly.
+
+## Loading the libraries
+
+Loading all required libraries
+
+```{r}
+library(biomaRt)
+library(SetupSequences)
+library(keras)
+library(caret)
+```
+
+## Obtaining the sequences
+
+First of all, we have to connect to ensembl.
+
+```{r}
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", GRCh=37)
+```
+
+Then, we ask ensembl for the UTR sequences.
+
+```{r}
+genesP <- scan(file = "Data/PositiveGenes", what = "raw") # Contains only the positive genes
+genesN <- scan(file = "Data/allGenes", what = "raw") # Contains ALL genes that synthetize protein 
+
+genesN <- genesN[-which(genesN %in% genesP)] # We remove the negative genes present in the positive list
+
+PosSequences <- getBM(attributes = c("ensembl_gene_id","5utr","hgnc_symbol"),
+                       filters = "hgnc_symbol",
+                       values = genesP,
+                       mart = ensembl)
+NegSequences<- getBM(attributes = c("ensembl_gene_id","5utr","hgnc_symbol"),
+                      filters = "hgnc_symbol",
+                      values = genesN,
+                      mart = ensembl)
+```
+
+Some of this sequences appear as unavailable. We have to remove those rows. We will also remove, a second time, just to be 100% sure, the positive genes that still appear in the negatives list.
+
+```{r}
+PosSequences <- PosSequences[!(PosSequences$`5utr` == "Sequence unavailable"),]
+NegSequences <- NegSequences[!(NegSequences$`5utr` == "Sequence unavailable"),] 
+
+# We remove positive genes from the negative list
+NegSequences <- NegSequences[-which(NegSequences$ensembl_gene_id %in% PosSequences$ensembl_gene_id),]
+```
+
+There are also certain sequences coincidentally shared between the positive and negative list. Since we do not want to give our network mixed signals, we will remove them from the negatives set (some of them might be hidden positive sequences, so keeping them might result in worse performances).
+
+For that, we need to stablish which are these shared sequences. We will achieve that here:
+
+```{r}
+pos <- PosSequences
+neg <- NegSequences
+
+shared <- data.frame(positive=integer(), negative=integer())
+```
+```{r, echo=FALSE, eval=FALSE}
+pos$shared <- 0
+
+for (i in 1:nrow(pos)){
+  for (j in 1:nrow(neg)){
+    if (pos[i,]$`5utr` == neg[j,]$`5utr`){
+      pos[i,]$shared <- pos[i,]$shared + 1
+      shared[nrow(shared)+1,] <- list(i,j)
+    }
+  }
+}
+
+write.csv(shared,file="Data/UTR/dataframeShared", row.names = FALSE, quote = FALSE)
+```
+
+This is a very long process, so we will include the list of shared sequences in a file. With that list, we can remove those sequences from the negatives set:
+
+```{r}
+shared <- read.csv(file="Data/UTR/dataframeShared")
+
+negShared_nonDup <- shared$negative
+negShared_nonDup <- negShared_nonDup[-which(duplicated(negShared_nonDup))] # Since the same row may appear more than once
+
+NegSequences <- NegSequences[-negShared_nonDup,]
+```
+
+Finally, we can save our data into some files for their later use.
+
+
+```{r}
+write.csv(PosSequences,file="Data/UTR/PositiveUTRSequences_untreated", row.names = FALSE, quote = FALSE)
+write.csv(NegSequences,file="Data/UTR/NegativeUTRSequences_untreated", row.names = FALSE, quote = FALSE)
+```
+
+## Treating the sequences
+
+First, we recover the sequences we obtained with ensembl.
+
+```{r}
+PosSequences <- read.csv("Data/UTR/PositiveUTRSequences_untreated")
+NegSequences <- read.csv("Data/UTR/NegativeUTRSequences_untreated")
+```
+
+The format is a bit different from what we look for. We have to change the type of the columns, since we are working with characters, not factors.
+
+```{r}
+
+PosSequences$ensembl_gene_id <- as.character(PosSequences$ensembl_gene_id)
+PosSequences$X5utr <- as.character(PosSequences$X5utr)
+
+NegSequences$ensembl_gene_id <- as.character(NegSequences$ensembl_gene_id)
+NegSequences$X5utr <- as.character(NegSequences$X5utr)
+
+```
+
+Next we start with the treatment of sequences. We have to:
+
+- Reverse them
+- Make sure all sequences are 250 characters long
+- One-hot encode them
+
+For that, we need some functions from the custom package developed for this project.
+
+```{r}
+# Example of sequence: AACCGT
+PosSequences$X5utr[1]  # Example of a positive sequence
+NegSequences$X5utr[1]  # Example of a negative sequence
+
+# strReverse:  AACCGT --> TGCCAA
+PosSequences$X5utr <- strReverse(PosSequences$X5utr)
+NegSequences$X5utr <- strReverse(NegSequences$X5utr)
+
+PosSequences$X5utr[1]  # The positive sequence, once reversed
+NegSequences$X5utr[1]  # The negative sequence, once reversed
+
+# padding_sequences: Inserts padding characters ("X") in sequences shorter than 250 characters, and trims sequences longer than 250 characters
+PosSequences$X5utr <- padding_sequences(PosSequences$X5utr)
+NegSequences$X5utr <- padding_sequences(NegSequences$X5utr)
+
+PosSequences$X5utr[1]  # The positive sequence, with some characters added so it can be 250 characters long
+NegSequences$X5utr[1]  # The negative sequence, trimmed so it becomes 250 characters long
+
+# to_onehot:   TGCCAA --> 00010010010010001000    (A = 1000, C = 0100, G = 0010, T = 0001)
+PosSequences$X5utr <- to_onehot(PosSequences$X5utr)
+NegSequences$X5utr <- to_onehot(NegSequences$X5utr)
+
+PosSequences$X5utr[1]  # The positive sequence, reversed, padded and one-hot encoded
+NegSequences$X5utr[1]  # The negative sequence, reversed, trimmed and one-hot encoded
+
+# Final check: Since some of the sequences might be corrupt, we will delete the ones that are corrupt, if they exist
+# We can know if a sequence is corrupt by looking for the W character. When one-hot encoding, we encoded everything that was not an A, T, C or G with a "W"
+
+if (any(grepl("W",PosSequences$X5utr)))
+  PosSequences <- PosSequences[-which(grepl("W",PosSequences$X5utr)),]
+
+if (any(grepl("W",NegSequences$X5utr)))
+  NegSequences <- NegSequences[-which(grepl("W",NegSequences$X5utr)),]
+```
+
+Once treated, we can save them in a file for later use.
+
+```{r}
+write.csv(PosSequences,file="Data/UTR/PositiveUTRSequences_treated", row.names = FALSE, quote = FALSE)
+write.csv(NegSequences,file="Data/UTR/NegativeUTRSequences_treated", row.names = FALSE, quote = FALSE)
+
+write.table(PosSequences$X5utr,file="Data/UTR/PositiveUTRSequences_sequences_treated", row.names = FALSE, quote = FALSE, col.names = FALSE)
+write.table(NegSequences$X5utr,file="Data/UTR/NegativeUTRSequences_sequences_treated", row.names = FALSE, quote = FALSE, col.names = FALSE)
+
+seqUTR <- append(PosSequences$X5utr,NegSequences$X5utr)
+fileCon<-file("Data/UTR/SeqUTR")
+write.table(seqUTR,file = fileCon, quote=FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+## Training the network
+First we have to recover the treated data.
+
+```{r}
+SeqUTR <- scan(file="Data/UTR/SeqUTR",what="character")
+SeqUTR <- SeqUTR[-which(duplicated(SeqUTR))]
+```
+
+Now we face an issue with our sequences. They are 1250 characters long strings, but R sees them as indivisible elements. We have to transform them before working with them, turning each 1250 characters long sequence into 1250 sequences of only one character.
+
+```{r}
+posNum <- 3657 # There are 3657 positive sequences
+
+n2 <- nchar(SeqUTR[1]) -1 # Number of divisions to make
+
+secuenciasOH <- sapply(1 + 1*0:n2, function(z) substr(SeqUTR, z, z))  # Obtaining the split characters
+df <- data.frame(secuenciasOH, "Value" = 0) # Saving them into a dataframe
+indx <- sapply(df, is.factor) 
+df[indx] <- lapply(df[indx], function(x) as.character(x)) # Factor --> char conversion
+
+df[1:posNum,]$Value <- 1 # We have the value of the positive sequences to positive
+```
+
+Since we are going to train five different models, we will divide our data into five different dataframes. Each of them will have the same number of positive and negative sequences. Since we don't have many positive sequences, we will train every model with every positive sequences. This way, every model will be trained with the same set of positive sequences, but a different set of negative sequences.
+
+```{r}
+start = posNum + 1
+end = start + posNum - 1
+df.a <- df[c(1:posNum,start:end),]
+df.b <- df[c(1:posNum,(start + posNum):(end + posNum)),]
+df.c <- df[c(1:posNum,(start + (posNum*2)):(end + (posNum*2))),]
+df.d <- df[c(1:posNum,(start + (posNum*3)):(end + (posNum*3))),]
+df.e <- df[c(1:posNum,(start + (posNum*4)):(end + (posNum*4))),]
+
+dfs <- list(df.a, df.b, df.c, df.d, df.e)
+```
+
+Now we have to divide our data into Training and Test for our model training.
+
+```{r}
+
+output <- c("Value")
+trains <- list()
+tests <- list()
+
+for (i in 1:5){
+  partition <- createDataPartition(dfs[[i]][[output]],
+                                     p = 0.8,
+                                     list = FALSE,
+                                     times = 1)
+  trains <- append(trains, list(dfs[[i]][partition,]))
+  tests <- append(tests, list(dfs[[i]][-partition,]))
+}
+
+```
+
+Once divided, we have to adapt the data to the format the model expects.
+
+```{r}
+train.x <- list()
+train.y <- list()
+
+test.x <- list()
+test.y <- list()
+
+for (i in 1:5){
+  train.x <- append(train.x, list(data.matrix(trains[[i]][,1:1250])))
+  train.y <- append(train.y, list(data.matrix(trains[[i]][,1251])))
+  
+  test.x <- append(test.x, list(data.matrix(tests[[i]][,1:1250])))
+  test.y <- append(test.y, list(data.matrix(tests[[i]][,1251])))
+
+  train.x[[i]] <- array_reshape(train.x[[i]], c(nrow(trains[[i]]),1250,1))
+  test.x[[i]] <- array_reshape(test.x[[i]], c(nrow(tests[[i]]),1250,1))
+ }
+```
+
+We have to prepare the dataframe that will contain the sequences and the output of the models.
+
+```{r}
+# Next step is making a dataframe of every control gene and predicting positive or negative
+genesN <- NegSequences
+genesP <- PosSequences
+ ##### We have to make some transformations to these secuences
+
+n2 <- nchar(genesN$X5utr[1]) - 1
+
+secuencesOH <- sapply(1 + 1*0:n2, function(z) substr(genesN$X5utr, z, z))  
+dfn <- data.frame(secuencesOH, gene=genesN$hgnc_symbol) 
+indx <- sapply(dfn, is.factor) 
+dfn[indx] <- lapply(dfn[indx], function(x) as.character(x))  #
+
+secuencesOH <- sapply(1 + 1*0:n2, function(z) substr(genesP$X5utr, z, z))  
+dfp <- data.frame(secuencesOH, gene=genesP$hgnc_symbol) 
+indx <- sapply(dfp, is.factor) 
+dfp[indx] <- lapply(dfp[indx], function(x) as.character(x))  
+
+# We have got a dataframe with the ensembl_id, sequence and hgnc symbol in genesP and genesN, and a dataframe with the split sequence and hgnc symbol in dfp and dfn
+
+finalSequencesN <- data.matrix(dfn[,1:1250])
+finalSequencesN <- array_reshape(finalSequencesN,c(nrow(finalSequencesN),1250,1))
+finalSequencesP <- data.matrix(dfp[,1:1250])
+finalSequencesP <- array_reshape(finalSequencesP,c(nrow(finalSequencesP),1250,1))
+
+genesP$model1 <- 0
+genesP$model2 <- 0
+genesP$model3 <- 0
+genesP$model4 <- 0
+genesP$model5 <- 0
+
+genesN$model1 <- 0
+genesN$model2 <- 0
+genesN$model3 <- 0
+genesN$model4 <- 0
+genesN$model5 <- 0
+
+```
+
+Now it is time to build our model. It follows the specifications mentioned in the thesis report. 
+
+```{r}
+  batch_size <- 125
+  epochs <- 125 
+  input_shape <- c(1250,1)
+  learn_rate = 0.0001
+  
+  modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+    layer_conv_1d(filters = 192, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
+    layer_max_pooling_1d() %>%
+    layer_dropout(0.25) %>%
+    layer_flatten() %>%
+    layer_dense(units = 50, activation = 'relu') %>% 
+    layer_dense(units = 1, activation="sigmoid") %>%
+    
+    summary(model)
+  
+  modelConvolu %>% compile(
+    loss = loss_binary_crossentropy,
+    optimizer = optimizer_nadam(lr = learn_rate),
+    metrics = c('accuracy')
+  )
+```
+
+And now we train that model with the data obtained. After each training epoch, we will obtain certain statistics related to the sensitivity and specificity of the model, since they are not metrics that Keras can return from the model.
+
+```{r}
+
+for (i in 1:5){
+  
+  sens <- NULL
+  spec <- NULL
+  history <- NULL
+ 
+  
+   modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+    layer_conv_1d(filters = 192, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
+    layer_max_pooling_1d() %>%
+    layer_dropout(0.25) %>%
+    layer_flatten() %>%
+    layer_dense(units = 50, activation = 'relu') %>% 
+    layer_dense(units = 1, activation="sigmoid") 
+  
+  modelConvolu %>% compile(
+    loss = loss_binary_crossentropy,
+    optimizer = optimizer_nadam(lr = learn_rate),
+    metrics = c('accuracy')
+  )
+  
+    for (epoch in 1:epochs){
+    historial <- modelConvolu %>% fit(
+      x = train.x[[i]],
+      y = train.y[[i]],
+      epochs = 1,  
+      batch_size = batch_size, 
+      validation_data = list(test.x[[i]], test.y[[i]]),
+      verbose = 2)
+    
+    history <- c(history, historial)
+  }
+  ## Prediction 
+  pred <- modelConvolu %>% predict(finalSequencesP, batch_size = batch_size)
+  genesP[,3+i] = round(pred)
+  
+  pred <- modelConvolu %>% predict(finalSequencesN, batch_size = batch_size)
+  genesN[,3+i] = round(pred)
+}
+
+```
+
+Lastly, we write the results in a file
+
+```{r}
+genesP$totalSum <- genesP$model1 + genesP$model2 + genesP$model3 + genesP$model4 + genesP$model5
+write.csv(genesP[,c(3,9)],file="Results/finalEvaluationP", row.names = FALSE, col.names = FALSE, quote = FALSE)
+genesP
+
+genesN$totalSum <- genesN$model1 + genesN$model2 + genesN$model3 + genesN$model4 + genesN$model5
+write.csv(genesN[,c(3,9)],file="Results/finalEvaluationN", row.names = FALSE, col.names = FALSE, quote = FALSE)
+genesN
+```
