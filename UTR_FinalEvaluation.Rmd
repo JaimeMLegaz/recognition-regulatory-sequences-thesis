@@ -131,6 +131,10 @@ Next we start with the treatment of sequences. We have to:
 For that, we need some functions from the custom package developed for this project.
 
 ```{r}
+# We save the sequences for later use
+PosSequences$raw5utr <- PosSequences$X5utr
+NegSequences$raw5utr <- NegSequences$X5utr
+
 # Example of sequence: AACCGT
 PosSequences$X5utr[1]  # Example of a positive sequence
 NegSequences$X5utr[1]  # Example of a negative sequence
@@ -224,6 +228,8 @@ Now we have to divide our data into Training and Test for our model training.
 output <- c("Value")
 trains <- list()
 tests <- list()
+usedForTrainPos <- list()
+usedForTrainNeg <- list()
 
 for (i in 1:5){
   partition <- createDataPartition(dfs[[i]][[output]],
@@ -232,7 +238,18 @@ for (i in 1:5){
                                      times = 1)
   trains <- append(trains, list(dfs[[i]][partition,]))
   tests <- append(tests, list(dfs[[i]][-partition,]))
+  
+  offset <- posNum * (i - 1)
+  
+  partPos <- partition[partition <= posNum]
+  partNeg <- partition[partition > posNum]
+  partNeg <- partNeg + offset
+  
+  usedForTrainPos <- append(usedForTrainPos,list(unlist(partPos)))
+  usedForTrainNeg <- append(usedForTrainNeg,list(unlist(partNeg)))
 }
+
+#usedForTrainPos <- usedForTrainPos[-which(duplicated(usedForTrainPos))] # Only the positive genes could be duplicated
 
 ```
 
@@ -374,6 +391,8 @@ for (i in 1:5){
 Lastly, we write the results in a file
 
 ```{r}
+
+# ESTO SE BORRA
 genesP$totalSum <- genesP$model1 + genesP$model2 + genesP$model3 + genesP$model4 + genesP$model5
 write.csv(genesP[,c(3,9)],file="Results/finalEvaluationP", row.names = FALSE, col.names = FALSE, quote = FALSE)
 genesP
@@ -381,4 +400,128 @@ genesP
 genesN$totalSum <- genesN$model1 + genesN$model2 + genesN$model3 + genesN$model4 + genesN$model5
 write.csv(genesN[,c(3,9)],file="Results/finalEvaluationN", row.names = FALSE, col.names = FALSE, quote = FALSE)
 genesN
+
+```
+
+Comprobation:
+
+```{r}
+models <- c("Model1","Model2","Model3","Model4","Model5")
+
+frameP <- data.frame(matrix(0, ncol=4, nrow=5))
+colnames(frameP) <-  c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong")
+
+frameN <- data.frame(matrix(0, ncol=4, nrow=5))
+colnames(frameN) <- c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong")
+```
+
+```{r}
+#saveVariable <- usedForTrainNeg
+usedForTrainNeg <- saveVariable
+for (i in 1:5) {
+  usedForTrainNeg[[i]] <- usedForTrainNeg[[i]] - posNum
+}
+
+```
+
+```{r}
+allRowsN <- 1:nrow(genesN)
+allRowsP <- 1:nrow(genesP)
+
+
+for (i in 1:5){
+  trainedWithNeg <-usedForTrainNeg[[i]]
+  notTrainedWithNeg <- allRowsN[-trainedWithNeg]
+  
+  countTrainNeg <- sum(genesN[trainedWithNeg,(3+i)] == 0)
+  countUntrainNeg <- sum(genesN[notTrainedWithNeg,(3+i)] == 0)
+  frameN[i,] <- c(countTrainNeg,length(trainedWithNeg) - countTrainNeg, countUntrainNeg, length(notTrainedWithNeg) - countUntrainNeg)
+  
+  trainedWithPos <-usedForTrainPos[[i]]
+  notTrainedWithPos <- allRowsP[-trainedWithPos]
+  
+  countTrainPos <- sum(genesP[trainedWithPos,(3+i)] == 1)
+  countUntrainPos <- sum(genesP[notTrainedWithPos,(3+i)] == 1)
+  frameP[i,] <- c(countTrainPos,length(trainedWithPos) - countTrainPos, countUntrainPos, length(notTrainedWithPos) - countUntrainPos)
+}
+```
+
+```{r}
+# 10 to 14
+genesP$trainingModel1 <- 0
+genesP$trainingModel2 <- 0
+genesP$trainingModel3 <- 0
+genesP$trainingModel4 <- 0
+genesP$trainingModel5 <- 0
+
+#15 to 19
+genesP$evaluationModel1 <- 0
+genesP$evaluationModel2 <- 0
+genesP$evaluationModel3 <- 0
+genesP$evaluationModel4 <- 0
+genesP$evaluationModel5 <- 0
+
+genesN$trainingModel1 <- 0
+genesN$trainingModel2 <- 0
+genesN$trainingModel3 <- 0
+genesN$trainingModel4 <- 0
+genesN$trainingModel5 <- 0
+
+genesN$evaluationModel1 <- 0
+genesN$evaluationModel2 <- 0
+genesN$evaluationModel3 <- 0
+genesN$evaluationModel4 <- 0
+genesN$evaluationModel5 <- 0
+
+```
+
+```{r}
+
+for(i in 1:5){
+  lowerEdge <- (posNum * (i-1)) + 1
+  upperEdge <- (posNum * i)
+  trainedWith <- lowerEdge:upperEdge
+  
+  genesN[trainedWith,14+i] <- 1
+  
+  for (j in usedForTrainPos[[i]]){
+      genesP[j,9+i] <- 1
+  }
+  
+  for (j in allRowsP[-usedForTrainPos[[i]]]){
+      genesP[j,14+i] <- 1
+  }
+    
+  genesN[usedForTrainNeg[[i]],9+i] <- 1
+  genesN[usedForTrainNeg[[i]],14+i] <- 0
+  
+}
+
+
+```
+
+```{r}
+# If done correctly, this should output 10 zeroes
+for (i in 1:5){
+  print(sum(genesP[,9+i] == 1 && genesP[,14+i] == 1))
+  print(sum(genesN[,9+i] == 1 && genesP[,14+i] == 1))
+}
+
+```
+
+```{r}
+genesP$X5utr <- decode_onehot(genesP$X5utr)
+genesN$X5utr <- decode_onehot(genesN$X5utr)
+
+genesP$totalSum <- genesP$model1 + genesP$model2 + genesP$model3 + genesP$model4 + genesP$model5
+write.csv(genesP,file="Results/finalEvaluationP", row.names = FALSE, col.names = FALSE, quote = FALSE)
+genesP
+
+genesN$totalSum <- genesN$model1 + genesN$model2 + genesN$model3 + genesN$model4 + genesN$model5
+write.csv(genesN,file="Results/finalEvaluationN", row.names = FALSE, col.names = FALSE, quote = FALSE)
+genesN
+
+write.csv(frameP,file="Results/statsPositive",row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.csv(frameN,file="Results/statsNegative",row.names = FALSE, col.names = FALSE, quote = FALSE)
+
 ```
