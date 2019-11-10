@@ -1,0 +1,122 @@
+---
+title: "Sequences"
+author: "Juan A. Botía"
+date: "30/07/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Dealing with biomart promoters
+
+As our sequence file has no FASTA format, we simply read the content and convert it into a `DNAStringSet` format.
+
+```{r}
+#pp = read.delim("~/Dropbox/sequences/sources.tar/positivePromoters_geneflank",stringsAsFactors=F,sep=",")
+library(Biostrings)
+pp = read.csv("Results/badseqs.tsv",
+                     stringsAsFactors=F, sep = "\t")
+pplist = NULL
+for(i in 1:nrow(pp))
+  pplist[i] = pp[i,2] 
+
+ppset = DNAStringSet(pplist)
+cmppset = consensusMatrix(ppset)
+```
+
+Now we'll create the consensus matrix as a quick way of inspecting the sequences. Before that, remember the DNA alphabet used in this package is a IUPAC code <http://genome.ucsc.edu/goldenPath/help/iupac.html>, as follows
+
+```{r}
+IUPAC_CODE_MAP
+```
+
+So we can appropriately represent multiple observed alleles in a single sequence. 
+
+```{r}
+cmppset = consensusMatrix(ppset)
+dim(cmppset)
+cmppset[1:5,1:5]
+
+#Do we have multiple alleles in any of the sequences? No
+if(max(cmppset[-c(1:4),]) > 0){
+  cat("Warning. We were expecting simple sequences. They are not\n")
+}else{
+  cat("All sequences are single DNA sequences\n")
+  #We keep only what is useful
+  cmppset = cmppset[1:4,]
+}
+  
+```
+
+Now we can also try interesting representations, as if we use the alphabet frequency
+```{r}
+alp = alphabetFrequency(ppset)
+alp[1:5,1:5]
+alp = alp[,1:4]
+pcas = prcomp(t(alp))
+plot(pcas$rotation[,1],pcas$rotation[,2])
+```
+ 
+Now let's do the same looking for differences between disease promoters and normal ones
+
+```{r}
+alp = alphabetFrequency(ppset)
+alp = alp[,1:4]
+np = read.csv("Results/goodseqs.tsv",
+                     stringsAsFactors=F, sep = "\t")
+nplist = NULL
+for(i in 1:nrow(np))
+  nplist[i] = np[i,1] 
+
+
+npset = DNAStringSet(nplist)
+nalp = alphabetFrequency(npset)
+max(nalp[,5:18])
+nalp[1:5,1:5]
+nalp = nalp[,1:4]
+aalp = rbind(nalp,alp)
+
+pcas = prcomp(t(aalp))
+plot(pcas$rotation[,1],pcas$rotation[,2],pch=19,cex=0.3,
+     col=c(rep("grey",nrow(nalp)),rep("red",nrow(alp))))
+```
+
+Red points correspond to promoters on disease genes. Therefore, we can say there is no appreciable difference, in terms of letter frequency across the 250 characters of the sequence. Red points are all over the place. 
+
+## Trying different k-mers
+
+
+
+```{r}
+kmers = 4
+for(k in kmers){
+  alp = oligonucleotideFrequency(ppset,k)
+  nalp = oligonucleotideFrequency(npset,k)
+  aalp = rbind(nalp,alp)
+  pcas = prcomp(t(aalp))
+  plot(pcas$rotation[,1],pcas$rotation[,2],pch=19,cex=0.3,
+       main=paste0(k,"k-mers"),
+     col=c(rep("grey",nrow(nalp)),rep("red",nrow(alp))))
+}
+
+```
+
+
+
+
+
+
+
+
+
+
+# References
+
+* This is a good and basic introduction to biostrings <https://kasperdanielhansen.github.io/genbioconductor/html/Biostrings.html>
+
+* This shows how to manage annotation and sequences simultaneously throug GenomicRanges <https://combine-australia.github.io/2017-05-19-bioconductor-melbourne/strings_and_ranges.html>
+
+* This may be useful to start working with the notion of k-mers <https://cran.r-project.org/web/packages/kmer/vignettes/kmer-vignette.html> 
+
