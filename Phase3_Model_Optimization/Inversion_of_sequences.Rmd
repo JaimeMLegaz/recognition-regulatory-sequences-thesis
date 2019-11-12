@@ -1,0 +1,304 @@
+---
+title: "5' UTRs in Intellectual disability"
+author: "Juan A. Botía"
+date: "30/07/2019"
+bibliography: "promoters/mylib.bib"
+output: 
+  html_document:
+    theme: spacelab
+    highlight: kate
+    df_print: paged
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+
+
+# Preparing the data to obtain DNA sequences from Bioconductor packages
+
+We load the libraries first.
+We'll use the Bioconductor classes for genome management. An alternative to this is Biomart but we strongly recommend accessing things locally as it will speed up everything.
+
+We need `BSgenome.Hsapiens.UCSC.hg19` to have available all DNA sequences in the human genome. We'll also need `TxDb.Hsapiens.UCSC.hg19.knownGene` for basic gene annotation on that very same genome. Finally, `org.Hs.eg.db` allows as to easily convert gene names amongst different annotation systems. 
+
+```{r,message=F,warning=F}
+library(org.Hs.eg.db)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+allgenes = read.delim("~/Dropbox/alumnos/jaimemartinez/tfg/workinggenes.txt",
+                      stringsAsFactors=F,header=F)$V1
+cat("We have",length(allgenes),"genes in our background set\n")
+idgenes = read.delim("~/Dropbox/alumnos/jaimemartinez/tfg/vissersgenes.tsv",
+                      stringsAsFactors=F,header=F)$V1
+cat("We have",length(idgenes),"genes linked to intellectual disability\n")
+potentialgenes = allgenes[!(allgenes %in% idgenes)]
+cat("We finally have",length(potentialgenes),"genes not linked to ID\n")
+
+condition = rep("C",length(allgenes))
+condition[allgenes %in% idgenes] = "D"
+```
+
+We basically get in `allgenes` the HUGO name of the intellectual disability and rest of control genes we'll use. In `condition` we have a label for each gene referring to whether it is an ID gene or not.
+
+Now we have to get the Entrez IDs for the Hugo names. Then we access the corresponding transcripts and add the information about ID.
+
+```{r}
+genome = BSgenome.Hsapiens.UCSC.hg19
+txdb = TxDb.Hsapiens.UCSC.hg19.knownGene
+utrs = fiveUTRsByTranscript(txdb,use.names=T)
+txs = transcripts(txdb)
+gene2tx <- mcols(transcripts(txdb, columns=c("gene_id", "tx_name")))
+gene2tx$gene_id <- as.character(gene2tx$gene_id)
+
+tname = AnnotationDbi::select(Homo.sapiens, 
+                                  keys=allgenes, 
+                                  columns='TXNAME', 
+                                  keytype='SYMBOL')
+
+#Getting the range for the corresponding genes
+mask = is.na(match(tname$TXNAME,txs$tx_name))
+tname = tname[!mask,]
+mytxs = txs[match(tname$TXNAME,txs$tx_name)]
+
+mytxs$condition = condition[match(tname$SYMBOL, allgenes)]
+mytxs$name = tname$SYMBOL[match(mytxs$tx_name,tname$TXNAME)]
+
+rightIds = unique(intersect(names(utrs), mytxs$tx_name))
+mytxs = mytxs[match(rightIds,mytxs$tx_name),]
+utrsOK = utrs[rightIds]
+
+```
+
+
+
+And we're ready to get any sequence we may need.
+
+# 5'UTR sequences
+
+```{r}
+seqstosave = NULL
+finaltab = NULL
+mydstrings = NULL
+mycstrings = NULL
+i = 1
+for(tname in names(utrsOK)){
+  tx = utrsOK[[tname]] 
+  
+  chrom = as.character(seqnames(tx)[1])
+  strand = as.character(strand(tx)[1])
+  chars = width(ranges(tx)[1])
+  start = start(ranges(tx)[1])
+    if(!is.null(genome[[chrom]])){
+      #This is our DNAString with the promoter
+      theString =DNAString(genome[[chrom]],
+                           start=start,
+                           nchar = chars)
+      
+      #It the strand is the reverse strand, we have to complement
+      #and reverse the string so we can use it as it were forward
+      #This version uses negative strands too
+      #if(strand == "-")
+      #  theString = reverseComplement(theString)
+      #Table for saving sequences
+      if(strand == "+")
+      seqstosave = rbind(seqstosave,c(mytxs$name[i],
+                                      mytxs$condition[i],
+                                      toString(theString)))
+    }
+  i = i + 1
+  if(i %% 1000 == 0)
+    print(i)
+}
+seqstosave = seqstosave[!duplicated(seqstosave),]
+colnames(seqstosave) = c("gene","condition","sequence")
+#write.table(seqstosave,"~/Dropbox/sequences/utrs/utrsSequences.tsv",sep="\t",row.names=F)
+write.table(seqstosave,"~/Dropbox/sequences/utrs/utrsOnlyPositiveStrandSequences.tsv",sep="\t",row.names=F)
+```
+
+Let us now have a look at the sequences, what about their length?
+
+```{r}
+seqstosave = read.delim("~/Dropbox/sequences/utrs/utrsOnlyPositiveStrandSequences.tsv",stringsAsFactors=F)
+maxlength = 500
+ls = unlist(lapply(seqstosave[seqstosave[,2] == "C",3],stringi::stri_length))
+ls = ls[ls < maxlength]
+plot(density(ls),main="5´UTR lengths",col="red")
+ls = unlist(lapply(seqstosave[seqstosave[,2] == "D",3],stringi::stri_length))
+ls = ls[ls < maxlength]
+lines(density(ls),col="blue")
+legend("topright",fill=c("blue","red"),
+       legend=c("disease","control"),cex=0.8)
+
+```
+
+Apparently, there are no dramatic differentes as one may expect. Can we learn something from looking at the sequences? In order to do that, we first have to code into one hot, by chosing a max length and padding those sequences which are shorter than that length.
+
+Now, we may wonder ourselves how many control sequences do we have in the positive sequence set?
+
+```{r}
+controls = seqstosave[seqstosave[,2] == "C",3]
+disease = seqstosave[seqstosave[,2] == "D",3]
+common = intersect(disease, controls)
+mask = which(seqstosave[,2] == "C" & seqstosave[,3] %in% common)
+seqstosave = seqstosave[-mask,]
+write.table(seqstosave,"~/Dropbox/sequences/utrs/utrsOnlyPositiveStrandSequencesDisjunct.tsv",sep="\t",row.names=F)
+
+```
+
+There are `r length(common)` sequences in the disease genes which are also in the controls. Therefore, we have a minimal coincidence. Even in that case, we remove those from the controls.
+
+We define a new `toOneHot()` function which chops and pads to leave all them equal.
+
+```{r}
+toOneHot = function(sequences,padding=T,maxl=250,reverse=T){
+  thedatarows = NULL
+  cat("Working on",length(sequences),"sequences\n")
+  indexes = 1:length(sequences)
+  alllengths = unlist(lapply(sequences,stringi::stri_length))
+  padindexes = which(alllengths < maxl)
+  cat("Padding\n")
+  count = 1
+  if(reverse){
+    cat("Reverting\n")
+    count = 1
+    for(i in indexes){
+      sequences[i] = stringi::stri_reverse(sequences[i])
+      count = count + 1
+      if(count %% 1000)
+        cat("Reverting",count,"\n")
+    }    
+  }
+  
+  for(i in padindexes){
+    sequences[i] = stringi::stri_pad(str=sequences[i],
+                                     width=maxl,pad="N",
+                                     side = "right")
+    count = count + 1
+    if(count %% 1000)
+      cat("Paded",count,"\n")
+  }
+  
+  chopindexes = which(alllengths > maxl)
+  cat("Chopping\n")
+  count = 1
+  for(i in chopindexes){
+    sequences[i] = stringi::stri_sub(str=sequences[i],from=1,maxl)
+    count = count + 1
+    if(count %% 1000)
+      cat("Chopped",count,"\n")
+  }
+  
+  cat("Translating to one hot coding\n")
+  for(i in indexes){
+    thestring = gsub("N","00001",
+                     gsub("A","10000",gsub("C","01000",
+                                           gsub("G","00100",gsub("T","00010",sequences[i])))))
+    thedatarows = rbind(thedatarows,strsplit(thestring,""))
+    if(i %% 1000)
+      cat("Coded",i,"\n")
+  }
+  thedatarows = t(apply(thedatarows,1,unlist))
+  thedatarows
+}
+```
+
+And now we generate the sequences and save
+
+```{r}
+seqstosave = read.delim("~/Dropbox/sequences/utrs/utrsOnlyPositiveStrandSequencesDisjunct.tsv",
+                        stringsAsFactors=F)
+maxl = 250
+mask = 1:nrow(seqstosave)
+onehotseqs = toOneHot(seqstosave[mask,3],maxl = maxl)
+onehotseqs = cbind(seqstosave[mask,c(1,2)],onehotseqs)
+colnames(onehotseqs) = c("gene","condition",paste0("Input",1:(ncol(onehotseqs) - 2)))
+write.table(onehotseqs,
+            paste0("~/Dropbox/sequences/utrs/utrsSequencesOneHot",maxl,".tsv"),
+            sep="\t",row.names=F,quote=F,col.names=T)
+```
+
+And now the network
+
+```{r}
+library(keras)
+onehotcondition = onehotseqs[,2]
+
+undersampled1hot = onehotseqs[,-c(1,2)]
+ntodel = sum(onehotcondition == "C") - sum(onehotcondition == "D")
+fromwheretodel = which(onehotcondition == "C")
+indexes = sample(fromwheretodel,ntodel)
+undersampled1hot = undersampled1hot[-indexes,]
+undercondition = onehotcondition[-indexes]
+
+nseqs = nrow(undersampled1hot)
+
+x_train = undersampled1hot
+y_train = undercondition
+y_trainn = rep(0,length(y_train))
+y_trainn[grep("D",y_train)] = 1
+y_trainn = to_categorical(y_trainn)
+x_train_nnr = array_reshape(as.matrix(x_train), c(nrow(x_train), 1250,1))
+
+```
+
+And now we train a single model just to get the taste of how it would work.
+
+```{r}
+model_d = keras_model_sequential() 
+model_d %>% 
+  #layer_conv_1d(filters = 192, 
+  #              kernel_size = 75, 
+  #              activation = "relu", 
+  #              input_shape = c(maxl,5))%>%
+  #  layer_max_pooling_1d() %>%
+  #  layer_dropout(0.25) %>%
+  #  layer_flatten() %>%
+  #  layer_dense(units = 50, activation = 'relu') %>% 
+  #  layer_dense(units = 1, activation="sigmoid") 
+
+  layer_conv_1d(filters = 192,
+                kernel_size = 75, 
+                activation = 'relu',
+                input_shape = c(1250,1)) %>% 
+  layer_max_pooling_1d() %>%
+  layer_dropout(0.25) %>%
+  layer_flatten() %>% 
+  layer_dense(units = 50, activation = 'relu') %>% 
+  layer_dropout(rate = 0.3) %>% 
+  layer_dense(units = 2, activation="softmax") 
+
+summary(model_d)
+
+model_d %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_adam(lr=0.00005),
+  metrics = 'accuracy')
+
+history_d = model_d %>% fit(
+  x_train_nnr, y_trainn, 
+  epochs = 50, 
+  batch_size = 5, 
+  validation_split = 0.25,
+  verbose = 2)
+```
+
+
+# Further readings
+
+* This is a good and basic introduction to biostrings <https://kasperdanielhansen.github.io/genbioconductor/html/Biostrings.html>
+
+* This shows how to manage annotation and sequences simultaneously throug GenomicRanges <https://combine-australia.github.io/2017-05-19-bioconductor-melbourne/strings_and_ranges.html>
+
+* This may be useful to start working with the notion of k-mers <https://cran.r-project.org/web/packages/kmer/vignettes/kmer-vignette.html> 
+
+* This is a database of promoter prediction <https://epd.epfl.ch/human/human_database.php?db=human>
+
+# References
+
