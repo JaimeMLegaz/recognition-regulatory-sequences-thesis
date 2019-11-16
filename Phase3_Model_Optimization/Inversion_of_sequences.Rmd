@@ -32,10 +32,10 @@ We need `BSgenome.Hsapiens.UCSC.hg19` to have available all DNA sequences in the
 library(org.Hs.eg.db)
 library(BSgenome.Hsapiens.UCSC.hg19)
 library(TxDb.Hsapiens.UCSC.hg19.knownGene)
-allgenes = read.delim("~/Dropbox/alumnos/jaimemartinez/tfg/workinggenes.txt",
+allgenes = read.delim("../Data/allGenes",
                       stringsAsFactors=F,header=F)$V1
 cat("We have",length(allgenes),"genes in our background set\n")
-idgenes = read.delim("~/Dropbox/alumnos/jaimemartinez/tfg/vissersgenes.tsv",
+idgenes = read.delim("../Data/positiveGenes",
                       stringsAsFactors=F,header=F)$V1
 cat("We have",length(idgenes),"genes linked to intellectual disability\n")
 potentialgenes = allgenes[!(allgenes %in% idgenes)]
@@ -95,31 +95,36 @@ for(tname in names(utrsOK)){
   strand = as.character(strand(tx)[1])
   chars = width(ranges(tx)[1])
   start = start(ranges(tx)[1])
-    if(!is.null(genome[[chrom]])){
-      #This is our DNAString with the promoter
-      theString =DNAString(genome[[chrom]],
-                           start=start,
-                           nchar = chars)
-      
-      #It the strand is the reverse strand, we have to complement
-      #and reverse the string so we can use it as it were forward
-      #This version uses negative strands too
-      #if(strand == "-")
-      #  theString = reverseComplement(theString)
-      #Table for saving sequences
-      if(strand == "+")
-      seqstosave = rbind(seqstosave,c(mytxs$name[i],
-                                      mytxs$condition[i],
-                                      toString(theString)))
-    }
+  
+  seqstosave = rbind(seqstosave,c(mytxs$name[i],
+                                      strand))
+  
+#    if(!is.null(genome[[chrom]])){
+#      #This is our DNAString with the promoter
+#      theString =DNAString(genome[[chrom]],
+#                           start=start,
+#                           nchar = chars)
+#      
+#      #It the strand is the reverse strand, we have to complement
+#      #and reverse the string so we can use it as it were forward
+#      #This version uses negative strands too
+#      #if(strand == "-")
+#      #  theString = reverseComplement(theString)
+#      #Table for saving sequences
+#      seqstosave = rbind(seqstosave,c(mytxs$name[i],
+#                                      mytxs$condition[i],
+#                                      toString(theString),
+#                                      strand))
+#    }
   i = i + 1
   if(i %% 1000 == 0)
     print(i)
 }
 seqstosave = seqstosave[!duplicated(seqstosave),]
-colnames(seqstosave) = c("gene","condition","sequence")
+#colnames(seqstosave) = c("gene","condition","sequence","strand")
+colnames(seqstosave) = c("gene","strand")
 #write.table(seqstosave,"~/Dropbox/sequences/utrs/utrsSequences.tsv",sep="\t",row.names=F)
-write.table(seqstosave,"~/Dropbox/sequences/utrs/utrsOnlyPositiveStrandSequences.tsv",sep="\t",row.names=F)
+write.table(seqstosave,"../Data/utrsOnlyPositiveStrandSequences.tsv",sep="\t",row.names=F)
 ```
 
 Let us now have a look at the sequences, what about their length?

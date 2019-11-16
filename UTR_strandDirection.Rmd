@@ -1,0 +1,111 @@
+---
+title: "5' UTRs in Intellectual disability"
+author: "Juan A. Botía"
+date: "30/07/2019"
+output: 
+  html_document:
+    theme: spacelab
+    highlight: kate
+    df_print: paged
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+
+
+# Preparing the data to obtain DNA sequences from Bioconductor packages
+
+We load the libraries first.
+We'll use the Bioconductor classes for genome management. An alternative to this is Biomart but we strongly recommend accessing things locally as it will speed up everything.
+
+We need `BSgenome.Hsapiens.UCSC.hg19` to have available all DNA sequences in the human genome. We'll also need `TxDb.Hsapiens.UCSC.hg19.knownGene` for basic gene annotation on that very same genome. Finally, `org.Hs.eg.db` allows as to easily convert gene names amongst different annotation systems. 
+
+```{r,message=F,warning=F}
+library(org.Hs.eg.db)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(Homo.sapiens)
+
+allgenes = read.delim("Data/allGenes",
+                      stringsAsFactors=F,header=F)$V1
+idgenes = read.delim("Data/positiveGenes",
+                      stringsAsFactors=F,header=F)$V1
+```
+
+We basically get in `allgenes` the HUGO name of the intellectual disability and rest of control genes we'll use. In `condition` we have a label for each gene referring to whether it is an ID gene or not.
+
+Now we have to get the Entrez IDs for the Hugo names. Then we access the corresponding transcripts and add the information about ID.
+
+```{r}
+genome = BSgenome.Hsapiens.UCSC.hg19
+txdb = TxDb.Hsapiens.UCSC.hg19.knownGene
+utrs = fiveUTRsByTranscript(txdb,use.names=T)
+txs = transcripts(txdb)
+gene2tx <- mcols(transcripts(txdb, columns=c("gene_id", "tx_name")))
+gene2tx$gene_id <- as.character(gene2tx$gene_id)
+
+tname = AnnotationDbi::select(Homo.sapiens, 
+                                  keys=allgenes, 
+                                  columns='TXNAME', 
+                                  keytype='SYMBOL')
+
+#Getting the range for the corresponding genes
+mask = is.na(match(tname$TXNAME,txs$tx_name))
+tname = tname[!mask,]
+mytxs = txs[match(tname$TXNAME,txs$tx_name)]
+
+mytxs$name = tname$SYMBOL[match(mytxs$tx_name,tname$TXNAME)]
+
+rightIds = unique(intersect(names(utrs), mytxs$tx_name))
+mytxs = mytxs[match(rightIds,mytxs$tx_name),]
+utrsOK = utrs[rightIds]
+
+```
+
+
+
+And we're ready to get any sequence we may need.
+
+# 5'UTR sequences
+
+```{r}
+seqstosave = NULL
+finaltab = NULL
+mydstrings = NULL
+mycstrings = NULL
+i = 1
+for(tname in names(utrsOK)){
+  tx = utrsOK[[tname]] 
+  
+  chrom = as.character(seqnames(tx)[1])
+  strand = as.character(strand(tx)[1])
+  chars = width(ranges(tx)[1])
+  start = start(ranges(tx)[1])
+  if(!is.null(genome[[chrom]])){
+      #This is our DNAString with the promoter
+      theString =DNAString(genome[[chrom]],
+                           start=start,
+                           nchar = chars)
+  
+      seqstosave = rbind(seqstosave,c(mytxs$name[i],
+                                           toString(theString),
+                                           strand))
+  }
+  i = i + 1
+  if(i %% 1000 == 0)
+    print(i)
+}
+seqstosave = seqstosave[!duplicated(seqstosave),]
+colnames(seqstosave) = c("gene","utr","strand")
+write.table(seqstosave,"Data/UTR/strands.tsv",sep="\t",row.names=F)
+```
+
+
+
