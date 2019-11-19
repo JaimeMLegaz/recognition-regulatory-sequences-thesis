@@ -366,6 +366,7 @@ for (i in 1:5){
   genesP[,3+i] = pred
   
   pred <- modelConvolu %>% predict(finalSequencesN, batch_size = batch_size)
+  pred <- 1 - pred
   genesN[,3+i] = pred
 }
 
@@ -386,10 +387,9 @@ genesN
 In this next step, we will identify the negative genes that are predicted as positive, and eliminate them from the control set. Then we will repeat everything
 
 ```{r}
+to_remove <- which(genesN[,9] < 1)
 
-to_remove <- which(genesN[,9] > 4.5)
-
-genesN <- genesN[-which(genesN[,9] > 4.5),]
+genesN <- genesN[-which(genesN[,9] < 1),]
 
 to_remove <- to_remove + nrow(genesP)
 df_loop <- df
@@ -537,12 +537,105 @@ for (i in 1:5){
     
     history <- c(history, historial)
   }
+  
+}
+
+```
+
+```{r}
+
+for (i in 1:5){
+  
+  sens <- NULL
+  spec <- NULL
+  history <- NULL
+ 
+  
+   modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+    layer_conv_1d(filters = 192, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
+    layer_max_pooling_1d() %>%
+    layer_dropout(0.25) %>%
+    layer_flatten() %>%
+    layer_dense(units = 50, activation = 'relu') %>% 
+    layer_dense(units = 1, activation="sigmoid") 
+  
+  modelConvolu %>% compile(
+    loss = loss_binary_crossentropy,
+    optimizer = optimizer_nadam(lr = learn_rate),
+    metrics = c('accuracy')
+  )
+  
+    for (epoch in 1:epochs){
+    historial <- modelConvolu %>% fit(
+      x = train.x[[i]],
+      y = train.y[[i]],
+      epochs = 1,  
+      batch_size = batch_size, 
+      validation_data = list(test.x[[i]], test.y[[i]]),
+      verbose = 2)
+    
+    history <- c(history, historial)
+    
+    ## Prediccion 
+    pred <- modelConvolu %>% predict(test.x[[i]], batch_size = batch_size)
+    prediction.y = round(pred)
+    # Confusion matrix
+    CM = table(prediction.y, test.y[[i]])
+    if (length(CM) > 2){
+      sens <- c(sens,sensitivity(CM))
+      spec <- c(spec,specificity(CM))
+    }
+    else {  # This happens in the weird cases the model only predicts positive or negative
+      if (sum(grepl(0,prediction.y)) > 0){
+        sens <- c(sens, 0)
+        spec <- c(spec, 1)
+      }
+      else{
+        sens <- c(sens, 0)
+        spec <- c(spec, 1)
+      }
+    }
+    }
   ## Prediction 
   pred <- modelConvolu %>% predict(finalSequencesP, batch_size = batch_size)
   genesP[,3+i] = pred
   
   pred <- modelConvolu %>% predict(finalSequencesN, batch_size = batch_size)
+  pred <- 1 - pred
   genesN[,3+i] = pred
 }
+``` 
 
+
+```{r, interpretandoDatos}
+nums <- NULL
+nums <- (1:(epochs))*2
+valaccs <- NULL
+accs <- NULL
+valoss <- NULL
+loss <- NULL
+for (i in nums){ 
+  valaccs <- c(valaccs,history[i]$metrics$val_acc) 
+  accs <- c(accs,history[i]$metrics$acc) 
+  loss <- c(loss,history[i]$metrics$loss) 
+  valoss <- c(valoss,history[i]$metrics$val_loss) 
+  }
+
+plot(valoss, ylim = c(min(valoss,loss), max(valoss,loss)), cex = 0, ylab="loss", xlab="epochs")
+lines(valoss, col="green")
+lines(loss, col="blue")
+legend("bottomleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+
+plot(valaccs, ylim = c(min(valaccs,accs), max(valaccs,accs)), cex = 0, ylab = "accuracy", xlab = "epochs")
+lines(valaccs, col="green")
+lines(accs, col="blue")
+legend("topleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+plot(sens, ylim = c(min(sens, spec, sens + spec - 1), max(sens, spec, sens+spec-1)), cex = 0)
+lines(sens,col="red")
+lines(spec,col="blue")
+lines((sens + spec) -1, col="orange")
+legend("bottomright", legend=c("Specificity","Sensitivity", "Youden"), col=c("blue","red", "orange"), lty = 1)
 ```
