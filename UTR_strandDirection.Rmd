@@ -57,12 +57,16 @@ tname = AnnotationDbi::select(Homo.sapiens, # Busca en la base de datos de Homo 
                                   keytype='SYMBOL')
 # columns(Homo.sapiens) muestra todas las posibles columnas. Antes estaba la de TXNAME
 
-#Getting the range for the corresponding genes
-mask = is.na(match(tname$TXNAME,txs$tx_name)) # Todo TRUE, dado que el resultado del match es todo NA
-tname = tname[!mask,] # Aquí tname sale vacío
-mytxs = txs[match(tname$TXNAME,txs$tx_name)]
+# We remove the version from the Ensembl names of txs$tx_name
+txs$tx_name <- substr(txs$tx_name, 1, min(nchar(txs$tx_name)-2))
+names(utrs) <- substr(names(utrs), 1, min(nchar(names(utrs))-2))
 
-mytxs$name = tname$SYMBOL[match(mytxs$tx_name,tname$TXNAME)]
+#Getting the range for the corresponding genes
+mask = is.na(match(tname$ENSEMBLTRANS,txs$tx_name)) # Todo TRUE, dado que el resultado del match es todo NA
+tname = tname[!mask,] # Contiene datos buenos
+mytxs = txs[match(tname$ENSEMBLTRANS,txs$tx_name)] # Tambien contiene datos buenos
+
+mytxs$name = tname$SYMBOL[match(mytxs$tx_name,tname$ENSEMBLTRANS)] # Contiene los hgnc_symbol
 
 rightIds = unique(intersect(names(utrs), mytxs$tx_name))
 mytxs = mytxs[match(rightIds,mytxs$tx_name),]
@@ -89,7 +93,7 @@ for(tname in names(utrsOK)){
   strand = as.character(strand(tx)[1])
   chars = width(ranges(tx)[1])
   start = start(ranges(tx)[1])
-  if(!is.null(genome[[chrom]])){
+  if(chrom %in% names(genome)){
       #This is our DNAString with the promoter
       theString =DNAString(genome[[chrom]],
                            start=start,
