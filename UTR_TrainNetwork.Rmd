@@ -102,9 +102,7 @@ Now it is time to build our model. It follows the specifications mentioned in th
   
   modelConvolu <- keras_model_sequential()
   modelConvolu %>% 
-    layer_conv_1d(filters = 192, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
-    layer_max_pooling_1d() %>%
-    layer_dropout(0.25) %>%
+    layer_conv_1d(filters = 48, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
     layer_flatten() %>%
     layer_dense(units = 50, activation = 'relu') %>% 
     layer_dense(units = 1, activation="sigmoid") %>%
