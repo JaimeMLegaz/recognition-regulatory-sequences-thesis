@@ -29,8 +29,8 @@ We need `BSgenome.Hsapiens.UCSC.hg19` to have available all DNA sequences in the
 
 ```{r,message=F,warning=F}
 library(org.Hs.eg.db)
-library(BSgenome.Hsapiens.UCSC.hg19)
-library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
 library(Homo.sapiens)
 
 allgenes = read.delim("Data/allGenes",
@@ -44,21 +44,22 @@ We basically get in `allgenes` the HUGO name of the intellectual disability and 
 Now we have to get the Entrez IDs for the Hugo names. Then we access the corresponding transcripts and add the information about ID.
 
 ```{r}
-genome = BSgenome.Hsapiens.UCSC.hg19
-txdb = TxDb.Hsapiens.UCSC.hg19.knownGene
+genome = BSgenome.Hsapiens.UCSC.hg38
+txdb = TxDb.Hsapiens.UCSC.hg38.knownGene
 utrs = fiveUTRsByTranscript(txdb,use.names=T)
-txs = transcripts(txdb)
-gene2tx <- mcols(transcripts(txdb, columns=c("gene_id", "tx_name")))
+txs = transcripts(txdb) # Los transcripts de los genes del Homo sapiens
+gene2tx <- mcols(transcripts(txdb, columns=c("gene_id", "tx_name")))  # txs pasado a Vector?
 gene2tx$gene_id <- as.character(gene2tx$gene_id)
 
-tname = AnnotationDbi::select(Homo.sapiens, 
-                                  keys=allgenes, 
-                                  columns='TXNAME', 
+tname = AnnotationDbi::select(Homo.sapiens, # Busca en la base de datos de Homo Sapiens los genes que le hemos dado,
+                                  keys=allgenes,   # y obtiene su txname
+                                  columns='ENSEMBLTRANS', # CAMBIAR ESTA COLUMNA POR OTRO FORMATO
                                   keytype='SYMBOL')
+# columns(Homo.sapiens) muestra todas las posibles columnas. Antes estaba la de TXNAME
 
 #Getting the range for the corresponding genes
-mask = is.na(match(tname$TXNAME,txs$tx_name))
-tname = tname[!mask,]
+mask = is.na(match(tname$TXNAME,txs$tx_name)) # Todo TRUE, dado que el resultado del match es todo NA
+tname = tname[!mask,] # Aquí tname sale vacío
 mytxs = txs[match(tname$TXNAME,txs$tx_name)]
 
 mytxs$name = tname$SYMBOL[match(mytxs$tx_name,tname$TXNAME)]
