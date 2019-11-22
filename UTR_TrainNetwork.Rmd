@@ -21,6 +21,7 @@ First we have to recover the treated data.
 
 ```{r}
 SeqUTR <- scan(file="Data/UTR/SeqUTR",what="character")
+SeqUTR <- SeqUTR[-which(duplicated(SeqUTR))]
 ```
 
 Now we face an issue with our sequences. They are 1250 characters long strings, but R sees them as indivisible elements. We have to transform them before working with them, turning each 1250 characters long sequence into 1250 sequences of only one character.

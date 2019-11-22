@@ -39,6 +39,10 @@ Now we have to get the direction of the strand of each gene, since it will decid
 
 strands <-  read.delim("Data/UTR/strands.tsv",
                       stringsAsFactors=F,header=T)
+
+PosSequences$X5utr <- strReverse(PosSequences$X5utr)
+NegSequences$X5utr <- strReverse(NegSequences$X5utr)
+
 PosSequences$direction <- "?"
 NegSequences$direction <- "?" 
 
