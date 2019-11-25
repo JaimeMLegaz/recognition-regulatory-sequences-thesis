@@ -20,7 +20,7 @@ library(caret)
 First we have to recover the treated data.
 
 ```{r}
-SeqUTR <- scan(file="Data/UTR/SeqUTR",what="character")
+SeqUTR <- scan(file="../Data/UTR/SeqUTR",what="character")
 SeqUTR <- SeqUTR[-which(duplicated(SeqUTR))]
 ```
 
@@ -44,6 +44,21 @@ Since we are going to train five different models, we will divide our data into 
 ```{r}
 start = posNum + 1
 end = start + posNum - 1
+loops = floor(nrow(df)/posNum) - 1
+dfs = vector("list",loops)
+
+for (i in 1:loops){
+  dataframe <- df[c(1:posNum,(start + (posNum*(i-1))):(end + (posNum*(i-1)))),]
+  dfs[[i]] <- dataframe
+  print(table(dfs[[i]]$Value))
+}
+
+
+```
+
+```{r}
+start = posNum + 1
+end = start + posNum - 1
 df.a <- df[c(1:posNum,start:end),]
 df.b <- df[c(1:posNum,(start + posNum):(end + posNum)),]
 df.c <- df[c(1:posNum,(start + (posNum*2)):(end + (posNum*2))),]
@@ -61,7 +76,7 @@ output <- c("Value")
 trains <- list()
 tests <- list()
 
-for (i in 1:5){
+for (i in 1:loops){
   partition <- createDataPartition(dfs[[i]][[output]],
                                      p = 0.8,
                                      list = FALSE,
@@ -81,7 +96,7 @@ train.y <- list()
 test.x <- list()
 test.y <- list()
 
-for (i in 1:5){
+for (i in 1:loops){
   train.x <- append(train.x, list(data.matrix(trains[[i]][,1:1250])))
   train.y <- append(train.y, list(data.matrix(trains[[i]][,1251])))
   
@@ -121,7 +136,7 @@ And now we train that model with the data obtained. After each training epoch, w
 
 ```{r}
 
-for (i in 1:5){
+for (i in 1:loops){
   
   sens <- NULL
   spec <- NULL
@@ -214,5 +229,6 @@ mean_acc = sum(tail(valaccs,n=7))/7 # Estimation of accuracy obtained
 mean_acc
 # 0.72999 con CBAXXX
 # 0.643932 con XXXABC
+# 0.5502247 con XXXCBA
 
 ```
