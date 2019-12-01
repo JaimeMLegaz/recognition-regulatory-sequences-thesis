@@ -325,9 +325,7 @@ Now it is time to build our model. It follows the specifications mentioned in th
   
   modelConvolu <- keras_model_sequential()
   modelConvolu %>% 
-    layer_conv_1d(filters = 192, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
-    layer_max_pooling_1d() %>%
-    layer_dropout(0.25) %>%
+    layer_conv_1d(filters = 48, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
     layer_flatten() %>%
     layer_dense(units = 50, activation = 'relu') %>% 
     layer_dense(units = 1, activation="sigmoid") %>%
@@ -354,9 +352,7 @@ for (i in 1:5){
   
    modelConvolu <- keras_model_sequential()
   modelConvolu %>% 
-    layer_conv_1d(filters = 192, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
-    layer_max_pooling_1d() %>%
-    layer_dropout(0.25) %>%
+    layer_conv_1d(filters = 48, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
     layer_flatten() %>%
     layer_dense(units = 50, activation = 'relu') %>% 
     layer_dense(units = 1, activation="sigmoid") 
@@ -380,10 +376,10 @@ for (i in 1:5){
   }
   ## Prediction 
   pred <- modelConvolu %>% predict(finalSequencesP, batch_size = batch_size)
-  genesP[,3+i] = round(pred)
+  genesP[,4+i] = round(pred)
   
   pred <- modelConvolu %>% predict(finalSequencesN, batch_size = batch_size)
-  genesN[,3+i] = round(pred)
+  genesN[,4+i] = round(pred)
 }
 
 ```
@@ -403,16 +399,27 @@ genesN
 
 ```
 
+Borrar esto de abajo, es solo para guardar cosas pa luego
+
+```{r} 
+#genesP <- saveGenesP
+#genesN <- saveGenesN
+
+saveGenesP <- genesP
+saveGenesN <- genesN
+
+```
+
 Comprobation:
 
 ```{r}
 models <- c("Model1","Model2","Model3","Model4","Model5")
 
-frameP <- data.frame(matrix(0, ncol=4, nrow=5))
-colnames(frameP) <-  c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong")
+frameP <- data.frame(matrix(0, ncol=7, nrow=5))
+colnames(frameP) <-  c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong", "RateTrainedRight", "RateUntrainedRight","DiseaseAssociated")
 
-frameN <- data.frame(matrix(0, ncol=4, nrow=5))
-colnames(frameN) <- c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong")
+frameN <- data.frame(matrix(0, ncol=7, nrow=5))
+colnames(frameN) <- c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong", "RateTrainedRight", "RateUntrainedRight","DiseaseAssociated")
 ```
 
 ```{r}
@@ -433,21 +440,21 @@ for (i in 1:5){
   trainedWithNeg <-usedForTrainNeg[[i]]
   notTrainedWithNeg <- allRowsN[-trainedWithNeg]
   
-  countTrainNeg <- sum(genesN[trainedWithNeg,(3+i)] == 0)
-  countUntrainNeg <- sum(genesN[notTrainedWithNeg,(3+i)] == 0)
-  frameN[i,] <- c(countTrainNeg,length(trainedWithNeg) - countTrainNeg, countUntrainNeg, length(notTrainedWithNeg) - countUntrainNeg)
+  countTrainNeg <- sum(genesN[trainedWithNeg,(4+i)] == 0) # Counts the number of genes used for training predicted as negative
+  countUntrainNeg <- sum(genesN[notTrainedWithNeg,(4+i)] == 0) # Counts the number of genes not used for training predicted as negative
+  frameN[i,] <- c(countTrainNeg,length(trainedWithNeg) - countTrainNeg, countUntrainNeg, length(notTrainedWithNeg) - countUntrainNeg, countTrainNeg/length(trainedWithNeg), countUntrainNeg/length(notTrainedWithNeg), 0)
   
   trainedWithPos <-usedForTrainPos[[i]]
   notTrainedWithPos <- allRowsP[-trainedWithPos]
   
-  countTrainPos <- sum(genesP[trainedWithPos,(3+i)] == 1)
-  countUntrainPos <- sum(genesP[notTrainedWithPos,(3+i)] == 1)
-  frameP[i,] <- c(countTrainPos,length(trainedWithPos) - countTrainPos, countUntrainPos, length(notTrainedWithPos) - countUntrainPos)
+  countTrainPos <- sum(genesP[trainedWithPos,(4+i)] == 1) # Counts the number of genes used for training predicted as positive
+  countUntrainPos <- sum(genesP[notTrainedWithPos,(4+i)] == 1) # Counts the number of genes not used for training predicted as positive
+  frameP[i,] <- c(countTrainPos,length(trainedWithPos) - countTrainPos, countUntrainPos, length(notTrainedWithPos) - countUntrainPos, countTrainPos/length(trainedWithPos), countUntrainPos/length(notTrainedWithPos), 1)
 }
 ```
 
 ```{r}
-# 10 to 14
+# 10 to 14 
 genesP$trainingModel1 <- 0
 genesP$trainingModel2 <- 0
 genesP$trainingModel3 <- 0
@@ -508,20 +515,29 @@ for (i in 1:5){
 }
 
 ```
+```{r}
+for (i in 1:5) {
+  genesN[,(4+i)] <- 1 - genesN[,(4+i)]
+}
+```
+
 
 ```{r}
-genesP$X5utr <- decode_onehot(genesP$X5utr)
-genesN$X5utr <- decode_onehot(genesN$X5utr)
 
 genesP$totalSum <- genesP$model1 + genesP$model2 + genesP$model3 + genesP$model4 + genesP$model5
-write.csv(genesP,file="Results/finalEvaluationP", row.names = FALSE, col.names = FALSE, quote = FALSE)
-genesP
+genesP$diseaseAssociation <- 1
+#write.csv(genesP,file="Results/finalEvaluationP", row.names = FALSE, col.names = FALSE, quote = FALSE)
+#genesP
 
 genesN$totalSum <- genesN$model1 + genesN$model2 + genesN$model3 + genesN$model4 + genesN$model5
-write.csv(genesN,file="Results/finalEvaluationN", row.names = FALSE, col.names = FALSE, quote = FALSE)
-genesN
+genesN$diseaseAssociation <- 0
+#write.csv(genesN,file="Results/finalEvaluationN", row.names = FALSE, col.names = FALSE, quote = FALSE)
+#genesN
+allGenes <- rbind(genesP,genesN)
+write.csv(allGenes,file="Results/finalEvaluationAllGenes", row.names = FALSE, col.names = FALSE, quote = FALSE)
 
-write.csv(frameP,file="Results/statsPositive",row.names = FALSE, col.names = FALSE, quote = FALSE)
-write.csv(frameN,file="Results/statsNegative",row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+allFrame <- rbind(frameP,frameN)
+write.csv(allFrame,file="Results/stats",row.names = FALSE, col.names = FALSE, quote = FALSE)
 
 ```

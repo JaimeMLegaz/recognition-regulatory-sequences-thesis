@@ -100,8 +100,8 @@ PosSequences$X5utr[1]  # The positive sequence, once reversed
 NegSequences$X5utr[1]  # The negative sequence, once reversed
 
 # padding_sequences: Inserts padding characters ("X") in sequences shorter than 250 characters, and trims sequences longer than 250 characters
-PosSequences$X5utr <- padding_sequences(PosSequences$X5utr)
-NegSequences$X5utr <- padding_sequences(NegSequences$X5utr)
+PosSequences$X5utr <- padding_sequences_left(PosSequences$X5utr)
+NegSequences$X5utr <- padding_sequences_left(NegSequences$X5utr)
 
 PosSequences$X5utr[1]  # The positive sequence, with some characters added so it can be 250 characters long
 NegSequences$X5utr[1]  # The negative sequence, trimmed so it becomes 250 characters long
