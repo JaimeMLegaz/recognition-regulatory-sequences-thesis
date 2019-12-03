@@ -384,20 +384,6 @@ for (i in 1:5){
 
 ```
 
-Lastly, we write the results in a file
-
-```{r}
-
-# ESTO SE BORRA
-genesP$totalSum <- genesP$model1 + genesP$model2 + genesP$model3 + genesP$model4 + genesP$model5
-write.csv(genesP[,c(3,9)],file="Results/finalEvaluationP", row.names = FALSE, col.names = FALSE, quote = FALSE)
-genesP
-
-genesN$totalSum <- genesN$model1 + genesN$model2 + genesN$model3 + genesN$model4 + genesN$model5
-write.csv(genesN[,c(3,9)],file="Results/finalEvaluationN", row.names = FALSE, col.names = FALSE, quote = FALSE)
-genesN
-
-```
 
 Borrar esto de abajo, es solo para guardar cosas pa luego
 
@@ -410,26 +396,38 @@ saveGenesN <- genesN
 
 ```
 
-Comprobation:
+Next we will save some statistics from the evaluation of the genes. First of all, we have to prepare two structures for each of the gene groups:
+- finalEval: Dataframe containing all the data about these genes: From their names and sequences, to some statistics such as success or failure of the evaluation of each model.
+- summary: Dataframe that contains general stats about the evaluation of all genes. All information appearing here will be taken from the finalEval dataframe. Each row corresponds to the stats of one specific model.
 
 ```{r}
 models <- c("Model1","Model2","Model3","Model4","Model5")
 
-frameP <- data.frame(matrix(0, ncol=7, nrow=5))
-colnames(frameP) <-  c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong", "RateTrainedRight", "RateUntrainedRight","DiseaseAssociated")
+summaryP <- data.frame(matrix(0, ncol=7, nrow=5))
+colnames(summaryP) <-  c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong", "RateTrainedRight", "RateUntrainedRight","DiseaseAssociated")
 
-frameN <- data.frame(matrix(0, ncol=7, nrow=5))
-colnames(frameN) <- c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong", "RateTrainedRight", "RateUntrainedRight","DiseaseAssociated")
+summaryN <- data.frame(matrix(0, ncol=7, nrow=5))
+colnames(summaryN) <- c("TrainedRight","TrainedWrong","UntrainedRight","UntrainedWrong", "RateTrainedRight", "RateUntrainedRight","DiseaseAssociated")
+
+finalEvalP <- genesP
+finalEvalN <- genesN
+
+str(summaryP)
+str(finalEvalP)
 ```
 
+Next we have to specify which genes were actually used to train the models. These genes have already been specified, but since now we are splitting them into two groups (Positives and Negatives) we have to correct the indexes of the second group (since old gene #3658 corresponds to the 1st Negative gene)
+
 ```{r}
-#saveVariable <- usedForTrainNeg
-usedForTrainNeg <- saveVariable
-for (i in 1:5) {
+saveVariable <- usedForTrainNeg # Borrar despues, y la sig tambien
+#usedForTrainNeg <- saveVariable
+for (i in 1:5) { # Correction of negative gene indexes
   usedForTrainNeg[[i]] <- usedForTrainNeg[[i]] - posNum
 }
 
 ```
+
+Now that we have corrected the indexes, we will create the summaries. For that, we have to check the success of failure of the evaluation of the genes, differentiating between genes used or not used for the training of the networks.
 
 ```{r}
 allRowsN <- 1:nrow(genesN)
@@ -440,81 +438,89 @@ for (i in 1:5){
   trainedWithNeg <-usedForTrainNeg[[i]]
   notTrainedWithNeg <- allRowsN[-trainedWithNeg]
   
-  countTrainNeg <- sum(genesN[trainedWithNeg,(4+i)] == 0) # Counts the number of genes used for training predicted as negative
-  countUntrainNeg <- sum(genesN[notTrainedWithNeg,(4+i)] == 0) # Counts the number of genes not used for training predicted as negative
-  frameN[i,] <- c(countTrainNeg,length(trainedWithNeg) - countTrainNeg, countUntrainNeg, length(notTrainedWithNeg) - countUntrainNeg, countTrainNeg/length(trainedWithNeg), countUntrainNeg/length(notTrainedWithNeg), 0)
+  countTrainNeg <- sum(finalEvalN[trainedWithNeg,(4+i)] == 0) # Counts the number of genes used for training predicted as negative
+  countUntrainNeg <- sum(finalEvalN[notTrainedWithNeg,(4+i)] == 0) # Counts the number of genes not used for training predicted as negative
+  summaryN[i,] <- c(countTrainNeg,length(trainedWithNeg) - countTrainNeg, countUntrainNeg, length(notTrainedWithNeg) - countUntrainNeg, countTrainNeg/length(trainedWithNeg), countUntrainNeg/length(notTrainedWithNeg), 0)
   
   trainedWithPos <-usedForTrainPos[[i]]
   notTrainedWithPos <- allRowsP[-trainedWithPos]
   
-  countTrainPos <- sum(genesP[trainedWithPos,(4+i)] == 1) # Counts the number of genes used for training predicted as positive
-  countUntrainPos <- sum(genesP[notTrainedWithPos,(4+i)] == 1) # Counts the number of genes not used for training predicted as positive
-  frameP[i,] <- c(countTrainPos,length(trainedWithPos) - countTrainPos, countUntrainPos, length(notTrainedWithPos) - countUntrainPos, countTrainPos/length(trainedWithPos), countUntrainPos/length(notTrainedWithPos), 1)
+  countTrainPos <- sum(finalEvalP[trainedWithPos,(4+i)] == 1) # Counts the number of genes used for training predicted as positive
+  countUntrainPos <- sum(finalEvalP[notTrainedWithPos,(4+i)] == 1) # Counts the number of genes not used for training predicted as positive
+  summaryP[i,] <- c(countTrainPos,length(trainedWithPos) - countTrainPos, countUntrainPos, length(notTrainedWithPos) - countUntrainPos, countTrainPos/length(trainedWithPos), countUntrainPos/length(notTrainedWithPos), 1)
 }
 ```
 
+The finalEval dataframe requieres some extra columns that we will now add. This columns refer to the training and evaluation of the models: A "1" in a certain column indicates that the gene referenced by the row was used by that model either in its training or in its evaluation. A "0" means it was not used for that task in that specific model.
+
 ```{r}
 # 10 to 14 
-genesP$trainingModel1 <- 0
-genesP$trainingModel2 <- 0
-genesP$trainingModel3 <- 0
-genesP$trainingModel4 <- 0
-genesP$trainingModel5 <- 0
+finalEvalP$trainingModel1 <- 0
+finalEvalP$trainingModel2 <- 0
+finalEvalP$trainingModel3 <- 0
+finalEvalP$trainingModel4 <- 0
+finalEvalP$trainingModel5 <- 0
 
 #15 to 19
-genesP$evaluationModel1 <- 0
-genesP$evaluationModel2 <- 0
-genesP$evaluationModel3 <- 0
-genesP$evaluationModel4 <- 0
-genesP$evaluationModel5 <- 0
+finalEvalP$evaluationModel1 <- 0
+finalEvalP$evaluationModel2 <- 0
+finalEvalP$evaluationModel3 <- 0
+finalEvalP$evaluationModel4 <- 0
+finalEvalP$evaluationModel5 <- 0
 
-genesN$trainingModel1 <- 0
-genesN$trainingModel2 <- 0
-genesN$trainingModel3 <- 0
-genesN$trainingModel4 <- 0
-genesN$trainingModel5 <- 0
+finalEvalN$trainingModel1 <- 0
+finalEvalN$trainingModel2 <- 0
+finalEvalN$trainingModel3 <- 0
+finalEvalN$trainingModel4 <- 0
+finalEvalN$trainingModel5 <- 0
 
-genesN$evaluationModel1 <- 0
-genesN$evaluationModel2 <- 0
-genesN$evaluationModel3 <- 0
-genesN$evaluationModel4 <- 0
-genesN$evaluationModel5 <- 0
+finalEvalN$evaluationModel1 <- 0
+finalEvalN$evaluationModel2 <- 0
+finalEvalN$evaluationModel3 <- 0
+finalEvalN$evaluationModel4 <- 0
+finalEvalN$evaluationModel5 <- 0
 
 ```
+
+And now we have to fill those columns. 
 
 ```{r}
 
 for(i in 1:5){
   lowerEdge <- (posNum * (i-1)) + 1
   upperEdge <- (posNum * i)
-  trainedWith <- lowerEdge:upperEdge
+  trainedWith <- lowerEdge:upperEdge # Range of genes that this model used, either for train or for evaluation
   
-  genesN[trainedWith,14+i] <- 1
+  finalEvalN[trainedWith,14+i] <- 1 # Default value is 1 for the evaluation and 0 for the training
   
-  for (j in usedForTrainPos[[i]]){
-      genesP[j,9+i] <- 1
+  for (j in usedForTrainPos[[i]]){ # If the gene was used in the training, the corresponding column gets a "1"
+      finalEvalP[j,9+i] <- 1
   }
   
-  for (j in allRowsP[-usedForTrainPos[[i]]]){
-      genesP[j,14+i] <- 1
+  for (j in allRowsP[-usedForTrainPos[[i]]]){ # If not, the corresponding evaluation column gets a "1"
+      finalEvalP[j,14+i] <- 1
   }
     
-  genesN[usedForTrainNeg[[i]],9+i] <- 1
-  genesN[usedForTrainNeg[[i]],14+i] <- 0
+  finalEvalN[usedForTrainNeg[[i]],9+i] <- 1 # We already have the list of negative genes used for the training of that model, so we set their training value to 1...
+  finalEvalN[usedForTrainNeg[[i]],14+i] <- 0 # ...and their evaluation value to 0
   
 }
 
-
 ```
+
+If everything was done correctly, no row should have a 1 in both training and evaluation of a certain model. The following block checks that:
 
 ```{r}
 # If done correctly, this should output 10 zeroes
 for (i in 1:5){
-  print(sum(genesP[,9+i] == 1 && genesP[,14+i] == 1))
-  print(sum(genesN[,9+i] == 1 && genesP[,14+i] == 1))
+  print(sum(finalEvalP[,9+i] == 1 && finalEvalP[,14+i] == 1))
+  print(sum(finalEvalN[,9+i] == 1 && finalEvalN[,14+i] == 1))
 }
 
 ```
+
+Now just a small fix for clarity (...)
+
 ```{r}
 for (i in 1:5) {
   genesN[,(4+i)] <- 1 - genesN[,(4+i)]
@@ -535,6 +541,7 @@ genesN$diseaseAssociation <- 0
 #genesN
 allGenes <- rbind(genesP,genesN)
 write.csv(allGenes,file="Results/finalEvaluationAllGenes", row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.csv(allGenes,file="Data/finalEvaluationAllGenes", row.names = FALSE, col.names = FALSE, quote = FALSE)
 
 
 allFrame <- rbind(frameP,frameN)
