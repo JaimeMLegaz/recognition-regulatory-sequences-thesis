@@ -1,0 +1,308 @@
+---
+title: "StatsVisualization"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Length histogram
+
+First, we want to check the length of our Negative (not associated with the disease) and Positive (associated with the disease) sequences. We do not want to work with every sequence, since some of them are too short to be able to help us. For that, we will check the distribution of lengths of our sequences, and then think about whether we should or not remove some of the sequences.
+
+First of all we have to import all our sequences.
+
+```{r}
+UTRseq <- read.csv(file="../Data/UTR/Stats/finalEvaluationAllGenes", stringsAsFactors = FALSE)
+```
+
+Now we plot the length of the sequences
+
+```{r}
+#df = as.data.frame(table(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 0])))+
+#  geom_bar(stat="identity")
+
+#pl <- ggplot(data=df, aes(x="length", y="frequency"))
+#pl
+
+# plot(table(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 0]))*100/sum(UTRseq$diseaseAssociation == 0), xlab="Lengths", ylab="# of Sequences", main="Length of Negative sequences")
+# lines(table(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 1]))*100/sum(UTRseq$diseaseAssociation == 1), col="red")
+
+plot(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 0])), col="blue", xlab="Lengths", ylab="# of Sequences", main="Length of sequences")
+lines(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 1])), col="red")
+legend("topright",legend=c("Negative sequences","Positive sequences"),
+       fill=c("blue","red"),cex=0.7)
+
+plot(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 0])), col="blue", xlim = c(-1,300), xlab="Lengths", ylab="# of Sequences", main="Length of sequences")
+lines(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 1])), col="red")
+legend("topright",legend=c("Negative sequences","Positive sequences"),
+       fill=c("blue","red"),cex=0.7)
+
+
+#barplot(df_1,  xlab="Lengths", ylab="# of Sequences", main="Length of Negative sequences", col=c("orange","blue"))
+#lines(table(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 1]))*100/sum(UTRseq$diseaseAssociation == 1), col="red")
+
+#lines(table(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 1])))
+
+```
+
+With those plots some further analysis becomes possible.
+
+## Padding lengths
+
+In this next step, we will analyze the length of the padding of the sequences. We will analyze the length of the padding of all the sequences, then just the length of the good sequences, and then the bad sequences.
+
+First, we have to retrieve those set of sequences:
+
+```{r}
+allSeqs <- read.csv("../Results/finalEvaluationAllGenes", stringsAsFactors=F)
+
+CBA.allSeqs <- as.data.frame(allSeqs$raw5utr, stringsAsFactors = FALSE)
+CBA.goodSeqs <- read.table("../Results/goodseqs_CBAXXX.tsv", stringsAsFactors=F, sep = "\t")
+CBA.badSeqs <- read.table("../Results/badseqs_CBAXXX.tsv", stringsAsFactors=F, sep = "\t")
+CBA.badSeqs <- as.data.frame(CBA.badSeqs[2:nrow(CBA.badSeqs),2], stringsAsFactors = FALSE)
+colnames(CBA.allSeqs) = colnames(CBA.goodSeqs) = colnames(CBA.badSeqs) = "sequence"
+```
+
+We are interested in knowing the lengths of the paddings. For that, we have to consider two things:
+- If the sequence is shorter than 250 characters, the length of the padding will be 250 - sequence_length
+- If it is longer or equal than 250 characters, then that length will be zero
+
+This next block will calculate the padding length of each sequence:
+
+```{r}
+CBA.allSeqs$padding_length <- 0
+CBA.goodSeqs$padding_length <- 0
+CBA.badSeqs$padding_length <- 0
+```
+
+
+```{r}
+
+for (i in 1:nrow(CBA.allSeqs)) {
+  seqLength <- nchar(CBA.allSeqs$sequence[i])
+  if (seqLength < 250){
+    CBA.allSeqs$padding_length[i] <- 250 - seqLength
+  }
+}
+
+for (i in 1:nrow(CBA.goodSeqs)) {
+  seqLength <- nchar(CBA.goodSeqs$sequence[i])
+  if (seqLength < 250){
+    CBA.goodSeqs$padding_length[i] <- 250 - seqLength
+  }
+}
+
+for (i in 1:nrow(CBA.badSeqs)) {
+  seqLength <- nchar(CBA.badSeqs$sequence[i])
+  if (seqLength < 250){
+    CBA.badSeqs$padding_length[i] <- 250 - seqLength
+  }
+}
+
+```
+
+Now that we have the lengths of the padding of these sequence sets, we will plot them to allow us to analyze them.
+
+```{r}
+
+barplot(table(CBA.allSeqs$padding_length), xlab="Length of the padding", ylab="Frequency", main="Length of the padding of all sequences")
+barplot(table(CBA.goodSeqs$padding_length), xlab="Length of the padding", ylab="Frequency", main="Length of the padding of good sequences")
+barplot(table(CBA.badSeqs$padding_length), xlab="Length of the padding", ylab="Frequency", main="Length of the padding of bad sequences")
+
+```
+
+Since there are so many sequences that do not need padding, we will ignore them and focus on the sequences that do need padding.
+
+```{r}
+barplot(table(CBA.allSeqs$padding_length[nchar(CBA.allSeqs$sequence) < 250]), xlab="Length of the padding", ylab="Frequency", main="Length of the padding of all sequences")
+barplot(table(CBA.goodSeqs$padding_length[nchar(CBA.goodSeqs$sequence) < 250]), xlab="Length of the padding", ylab="Frequency", main="Length of the padding of good sequences")
+barplot(table(CBA.badSeqs$padding_length[nchar(CBA.badSeqs$sequence) < 250]), xlab="Length of the padding", ylab="Frequency", main="Length of the padding of bad sequences")
+```
+
+Now there are too many different values, so the plots can be difficult to read. We will group the values in intervals to fix this.
+
+```{r}
+CBA.allSeqs$interval <- cut(CBA.allSeqs$padding_length, seq(0,250,10), include.lowest = TRUE)
+CBA.goodSeqs$interval <- cut(CBA.goodSeqs$padding_length, seq(0,250,10), include.lowest = TRUE)
+CBA.badSeqs$interval <- cut(CBA.badSeqs$padding_length, seq(0,250,10), include.lowest = TRUE)
+
+barplot(table(CBA.allSeqs$interval[nchar(CBA.allSeqs$sequence) < 250]), xlab="Length of the padding", ylab="Frequency", main="Length of the padding of all sequences")
+barplot(table(CBA.goodSeqs$interval[nchar(CBA.goodSeqs$sequence) < 250]), xlab="Length of the padding", ylab="Frequency", main="Length of the padding of good sequences")
+barplot(table(CBA.badSeqs$interval[nchar(CBA.badSeqs$sequence) < 250]), xlab="Length of the padding", ylab="Frequency", main="Length of the padding of bad sequences")
+```
+
+## Differences between results of different sequence treatments
+
+At one point we tried different sequence treatments for our models. These included every combination of mirroring/not mirroring the sequences, and adding some padding to the left and to the right. The results we got showed that mirroring the sequences and padding to the right was the best option, though doing the exact opposite (not mirroring and padding to the right) got just a slightly worse result. 
+
+We will now try to identify the sequences that were correctly evaluated in each of those two variations. In case they are different, we could then do a mix of both variations, mirroring or not depending on the sequence, to obtain better results.
+
+To simplify things, we will imagine an example sequence "ABC". From now on, we will refer to the "mirrored and padded to the right" sequences as "CBAXXX" sequences, and the "not mirrored and padded to the left" sequences as "XXXABC" sequences.
+
+The first thing we have to do is import our CBAXXX sequences.
+
+```{r}
+
+CBA.goodSeqs <- read.table("../Results/goodseqs.tsv", stringsAsFactors=F, sep = "\t")
+CBA.badSeqs <- read.table("../Results/badseqs_CBAXXX.tsv", stringsAsFactors=F, sep = "\t")
+CBA.badSeqs <- as.data.frame(CBA.badSeqs[2:nrow(CBA.badSeqs),2], stringsAsFactors = FALSE)
+
+```
+
+Then we have to import our XXXABC sequences
+
+```{r}
+
+ABC.goodSeqs <- read.table("../Results/goodseqs_XXXABC.tsv", stringsAsFactors=F, sep = "\t")
+ABC.badSeqs <- read.table("../Results/badseqs_XXXABC.tsv", stringsAsFactors=F, sep = "\t")
+ABC.badSeqs <- as.data.frame(ABC.badSeqs[2:nrow(ABC.badSeqs),2], stringsAsFactors = FALSE)
+
+```
+
+Now we will check for a possible overlap of the good sequences of these two sets.
+
+```{r}
+
+ABC.goodSeqs$shared <- 0
+ABC.badSeqs$shared <- 0
+
+for (i in 1:nrow(ABC.goodSeqs)){
+  for (j in 1:nrow(CBA.goodSeqs)){
+    if (ABC.goodSeqs$V1[i] == CBA.goodSeqs$V1[j])
+      ABC.goodSeqs$shared[i] = 1
+  }
+}
+
+for (i in 1:nrow(ABC.badSeqs)){
+  for (j in 1:nrow(CBA.badSeqs)){
+    if (ABC.badSeqs[i,1] == CBA.badSeqs[j,1])
+      ABC.badSeqs$shared[i] = 1
+  }
+}
+
+```
+
+And we show the results here
+
+```{r}
+print("Overlap of good sequences")
+table(ABC.goodSeqs$shared)
+
+print("Overlap of bad sequences")
+table(ABC.badSeqs$shared)
+```
+
+As we can see, there is little overlap for the difficult to learn sequences, and a very noticable overlap for the good sequences. Let's do that again but checking the CBA sequences instead of the ABC sequences.
+
+
+```{r}
+
+CBA.goodSeqs$shared <- 0
+CBA.badSeqs$shared <- 0
+
+for (i in 1:nrow(CBA.goodSeqs)){
+  for (j in 1:nrow(ABC.goodSeqs)){
+    if (CBA.goodSeqs$V1[i] == ABC.goodSeqs$V1[j])
+      CBA.goodSeqs$shared[i] = 1
+  }
+}
+
+for (i in 1:nrow(CBA.badSeqs)){
+  for (j in 1:nrow(ABC.badSeqs)){
+    if (CBA.badSeqs[i,1] == ABC.badSeqs[j,1])
+      CBA.badSeqs$shared[i] = 1
+  }
+}
+
+```
+
+And we show the results here
+
+```{r}
+print("Overlap of good sequences")
+table(CBA.goodSeqs$shared)
+
+print("Overlap of bad sequences")
+table(CBA.badSeqs$shared)
+```
+
+We get similar results, although slightly different because of the difference in the number of sequences. But they still share most of the easy to learn sequences. In case of the difficult to learn sequences, the results are also similar.
+
+We can see that the number of shared sequences differs in both cases, and that should not happen. That means there are some duplicated sequences in our sets. We will fix this and repeat the experiments:
+
+```{r}
+
+CBA.goodSeqs <- read.table("../Results/goodseqs.tsv", stringsAsFactors=F, sep = "\t")
+CBA.badSeqs <- read.table("../Results/badseqs_CBAXXX.tsv", stringsAsFactors=F, sep = "\t")
+CBA.badSeqs <- as.data.frame(CBA.badSeqs[2:nrow(CBA.badSeqs),2], stringsAsFactors = FALSE)
+
+CBA.goodSeqs <-unique(CBA.goodSeqs)
+CBA.badSeqs <- unique(CBA.badSeqs)
+
+```
+```{r}
+
+ABC.goodSeqs <- read.table("../Results/goodseqs_XXXABC.tsv", stringsAsFactors=F, sep = "\t")
+ABC.badSeqs <- read.table("../Results/badseqs_XXXABC.tsv", stringsAsFactors=F, sep = "\t")
+ABC.badSeqs <- as.data.frame(ABC.badSeqs[2:nrow(ABC.badSeqs),2], stringsAsFactors = FALSE)
+
+ABC.goodSeqs <-unique(ABC.goodSeqs)
+ABC.badSeqs <- unique(ABC.badSeqs)
+
+```
+```{r}
+
+ABC.goodSeqs$shared <- 0
+ABC.badSeqs$shared <- 0
+
+for (i in 1:nrow(ABC.goodSeqs)){
+  for (j in 1:nrow(CBA.goodSeqs)){
+    if (ABC.goodSeqs$V1[i] == CBA.goodSeqs$V1[j])
+      ABC.goodSeqs$shared[i] = 1
+  }
+}
+
+for (i in 1:nrow(ABC.badSeqs)){
+  for (j in 1:nrow(CBA.badSeqs)){
+    if (ABC.badSeqs[i,1] == CBA.badSeqs[j,1])
+      ABC.badSeqs$shared[i] = 1
+  }
+}
+
+```
+```{r}
+print("Overlap of good sequences")
+table(ABC.goodSeqs$shared)
+
+print("Overlap of bad sequences")
+table(ABC.badSeqs$shared)
+```
+```{r}
+
+CBA.goodSeqs$shared <- 0
+CBA.badSeqs$shared <- 0
+
+for (i in 1:nrow(CBA.goodSeqs)){
+  for (j in 1:nrow(ABC.goodSeqs)){
+    if (CBA.goodSeqs$V1[i] == ABC.goodSeqs$V1[j])
+      CBA.goodSeqs$shared[i] = 1
+  }
+}
+
+for (i in 1:nrow(CBA.badSeqs)){
+  for (j in 1:nrow(ABC.badSeqs)){
+    if (CBA.badSeqs[i,1] == ABC.badSeqs[j,1])
+      CBA.badSeqs$shared[i] = 1
+  }
+}
+
+```
+```{r}
+print("Overlap of good sequences")
+table(CBA.goodSeqs$shared)
+
+print("Overlap of bad sequences")
+table(CBA.badSeqs$shared)
+```

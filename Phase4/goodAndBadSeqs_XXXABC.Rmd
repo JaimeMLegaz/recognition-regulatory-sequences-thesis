@@ -1,0 +1,126 @@
+---
+title: "Reviewing results from Jaime"
+author: "Juan A. Botía"
+date: "05/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this work we want to extract the results from the five neural models. Furthermore, we aim at defining a general metodology for evaluation of the results. We firstly read all results in which, for all sequences, we know when it was used for traning, and whether the CNN made it right when predicting, regardless it was used for training or not.
+
+```{r}
+results = read.csv("../Data/UTR/finalEvaluationAllGenes_XXXABC",
+                     stringsAsFactors=F)
+```
+
+
+# Getting harder sequences
+
+These are the disease genes that are never classified correctly, no matter they were used for training or evaluation, being disease
+
+```{r}
+sequences = results$raw5utr[results$diseaseAssociated == 1 & 
+                                     results$model1 + results$model2 + results$model3 + 
+                                     results$model4 + results$model5 == 0]
+sequences
+```
+
+No sequence is so difficult. There is no disease gene ever classified as non disease by any of the CNNs. This is good news.
+
+But still, we want know to know the 5'UTR sequences that when used for training, were not classified correctly. Obviously, some genes/sequences will be used for training 5 times, others will be used 4 times and so on. So we have to separate across frequency of usage
+
+```{r}
+#Keep only disease genes and columns we need
+dgenesdata = results[results$diseaseAssociated == 1,
+                     c("model1","model2","model3","model4","model5",
+                       "trainingModel1","trainingModel2","trainingModel3",
+                       "trainingModel4","trainingModel5")]
+
+
+#Create new table, with two columns. 1st column will hold the number 
+#of times it was used for training. 2nd column the number of times 
+#it was used and not classified as disease
+
+out = t(apply(dgenesdata,1,function(x){
+  c(sum(x[6:10]),sum(sum(x[1] == 0 & x[6] == 1),
+    sum(x[2] == 0 & x[7] == 1),
+    sum(x[3] == 0 & x[8] == 1),
+    sum(x[4] == 0 & x[9] == 1),
+    sum(x[5] == 0 & x[10] == 1)))
+}))
+colnames(out) = c("timesused","notlearn")
+
+#Now we plot everything
+fout = NULL
+for(times in 1:5){
+  mask = out[,1] == times
+  fout = rbind(fout,table(out[mask,2]))
+}
+rownames(fout) = 1:5
+barplot(t(fout),beside = T,col=c("orange","blue"),
+        main="Seqs. across number of times used for training",
+        ylim=c(0,1500),
+        xlab="Times used in training 5 CNNs",
+        ylab="Sequences")
+legend("topleft",legend=c("Used in training","Wrong classification"),
+       fill=c("orange","blue"),cex=0.7)
+
+#Ratio across categories
+cat("The following is the ratio across times used in training, from 1 to 5")
+print(fout[,2]/fout[,1])
+```
+
+Having a look at the plot and the ratios, we know that many sequences are used at least four times (i.e. the orange bar at 4, x axis plus the orange bar at 5). Let's focus on those sequences that were used at least 4 times (orange) and classified wrong (blue) for many times. 
+
+```{r}
+counts = sapply(1:5,
+                function(x){
+                  sum(out[out[,1] >= 4,2] >=x)
+                })
+names(counts) = 1:5
+barplot(counts,main="Seqs. used at least 4 times, wrong classification",
+        xlab="Times missed",ylab="Sequence count")
+```
+
+And the sequences are
+
+```{r}
+lresults = results[results$diseaseAssociated == 1,]
+lresults = lresults[out[,1] >= 4,]
+lout = out[out[,1] >= 4,]
+
+final = NULL
+seqs = lapply(1:5,function(x){
+                  oneseq = lresults$raw5utr[lout[,2] >=x]
+                  final <<- rbind(final,cbind(rep(x,length(oneseq)),oneseq))
+                })
+colnames(final) = c("missed","raw5utr")
+write.table(final,"../Results/badseqs_XXXABC.tsv",
+            sep="\t",col.names=T,quote=F,row.names=F)
+```
+
+Now we have a set of sequences that were used enought times on training (at least 4) and were not classified correctly in some (or many) of those trials. 
+
+Now we can try to characterise those and find why they are hard to learn.
+
+# Getting easy sequences
+
+This is going to be an easy one. If we look at how many different sequences we can get that were classified correctly for all the five models, 
+
+```{r}
+sequences = results$raw5utr[results$diseaseAssociated == 1 & results$totalSum == 5]
+sequences
+```
+
+we can see we get up to 2871 sequences. More than enough for what we want.
+
+```{r}
+write.table(sequences,"../Results/goodseqs_XXXABC.tsv",
+            sep="\t",col.names=F,quote=F,row.names=F)
+```
+
