@@ -477,6 +477,26 @@ for (i in 1:5){
       verbose = 2)
     
     history <- c(history, historial)
+    
+    ## Calculating sensitivity and specificity
+    pred <- modelConvolu %>% predict(test.x[[i]], batch_size = batch_size)
+    prediction.y = round(pred)
+    # Confusion matrix
+    CM = table(prediction.y, test.y[[i]])
+    if (length(CM) > 2){
+      sens <- c(sens,sensitivity(CM))
+      spec <- c(spec,specificity(CM))
+    }
+    else {  # This happens in the weird cases the model only predicts positive or negative
+      if (sum(grepl(0,prediction.y)) > 0){
+        sens <- c(sens, 0)
+        spec <- c(spec, 1)
+      }
+      else{
+        sens <- c(sens, 0)
+        spec <- c(spec, 1)
+      }
+    }
   }
   ## Prediction 
   pred <- modelConvolu %>% predict(finalSequencesP, batch_size = batch_size)
@@ -487,10 +507,57 @@ for (i in 1:5){
   
   models <- append(models, modelConvolu)
   all_history <- append(all_history, historial)
+  
+  
+  
 }
 
 #})
 ```
+
+Lastly, we will plot the graphs showing the results of the training of this model.
+
+```{r, interpretandoDatos}
+nums <- NULL
+nums <- (1:(epochs))*2
+valaccs <- NULL
+accs <- NULL
+valoss <- NULL
+loss <- NULL
+for (i in nums){ 
+  valaccs <- c(valaccs,history[i]$metrics$val_acc) 
+  accs <- c(accs,history[i]$metrics$acc) 
+  loss <- c(loss,history[i]$metrics$loss) 
+  valoss <- c(valoss,history[i]$metrics$val_loss) 
+  }
+
+plot(valoss, ylim = c(min(valoss,loss), max(valoss,loss)), cex = 0, ylab="loss", xlab="epochs")
+lines(valoss, col="green")
+lines(loss, col="blue")
+legend("bottomleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+
+plot(valaccs, ylim = c(min(valaccs,accs), max(valaccs,accs)), cex = 0, ylab = "accuracy", xlab = "epochs")
+lines(valaccs, col="green")
+lines(accs, col="blue")
+legend("topleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+plot(sens, ylim = c(min(sens, spec, sens + spec - 1), max(sens, spec, sens+spec-1)), cex = 0)
+lines(sens,col="red")
+lines(spec,col="blue")
+lines((sens + spec) -1, col="orange")
+legend("bottomright", legend=c("Specificity","Sensitivity", "Youden"), col=c("blue","red", "orange"), lty = 1)
+
+
+
+mean_acc = sum(tail(valaccs,n=7))/7 # Estimation of accuracy obtained
+mean_acc
+# 0.72999 con CBAXXX
+# 0.643932 con XXXABC
+
+```
+
+The results seem more than acceptable, with a relatively low loss, a very high accuracy almost reaching 0.95, and high sensitivity and specificity values.
 
 # Determining the relevances of the characters
 
@@ -498,11 +565,13 @@ We will obtain the relevances of the characters of the sequences using the LRP a
 
 ## LRP Pseudo-code
 
-With the exeption of the output layer, the relevance of each node j is equal to the sum of the relevances R(j<-k) for every node k in the last computed layer.
+With the exeption of the output layer, the relevance of each node j is equal to the sum of the relevances R(j<-k) for every node k in the last computed layer. For example, k might be the output node (the first layer we obtain the relevance of) and j might be any node from the dense layer, which is the second layer we compute.
 
-This R(j<-k) is equal to (Numerator(j,k)/Denominator(j,k))*R(k), being these:
+This R(j<-k) is equal to:
 
-- Numerator(j,k): The activation of the node k * the weight between the nodes j and k
+$$R(j\leftarrow k) = \frac{Numerator(j,k)}{Denominator(j,k)}*R(k)$$
+
+- Numerator(j,k): The activation of the node k multiplied by the weight between the nodes j and k
 - Denominator(j,k): The summatory of the Numerators(n,k) for every node n in the same layer as j
 - R(k): The relevance obtained for the node k
 
@@ -691,7 +760,6 @@ lrp <- function(model, input){ # Asks for the model and the input sequence
   }
   
   ## STEP 6: RETURNING RESULT
-  
   return(Rk[["input"]] / used[["input"]])
     
 }
@@ -794,6 +862,8 @@ normalizeDF <- function(posdf, negdf){ # This function is for single models
 
 ```
 
+## Loading the relevances of the five models
+
 Once defined the function, we load all the relevances we calculated previously. 
 
 We have to remember we used cross-validation to train the models, and, for that reason, we have 5 different models right now. Each model will have different relevances since they were trained with different sequences. So, we will load the relevances of each model.
@@ -816,6 +886,8 @@ for (i in 1:5) # Loading the negative relevances
 
 ```
 
+## Plotting the relevances of the five models
+
 Now that we have the relevances loaded, we will start with the data visualization. In all the plots we will show now, the x-axis will correspond to the position of the character, and the y-axis will be its relevance. For example, a point of X = 100 and Y = 0.3 means that the 100th character in the sequence had a normalized relevance of 0.3.
 
 The first five plots we will look at contains all the sequences of one of the five models in a single graph. We will paint the positive sequences in red, and the negative sequences in blue. Also, a dotted line represents the padding characters in a sequence, while a continuous line represents the useful characters (A,C,G,T). Later we will study the relevance of these characters more in depth.
@@ -823,13 +895,9 @@ The first five plots we will look at contains all the sequences of one of the fi
 
 ```{r, fig.show='hold', out.width='25%'}
 
-norms <- normalizeRelList(pos_rel, neg_rel)
-pos_norm <- norms[[1]]
-neg_norm <- norms[[2]]
-
 for (i in 1:5){ # One plot for every model
-  pr_norm <- pos_norm[[i]] # The positive and negative relevances of the current model
-  nr_norm <- neg_norm[[i]]
+  pr_norm <- pos_rel[[i]] # The positive and negative relevances of the current model
+  nr_norm <- neg_rel[[i]]
   
   plot(type="n", xlim <- c(1,250), c(min(pr_norm,nr_norm), max(pr_norm,nr_norm)), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main=paste0("Relevances of every positive and negative sequence in model number ",i))
   for (j in 1:nrow(pr_norm)){
@@ -865,14 +933,14 @@ Looking at the plots above, it seems that the relevances obtained by the 5 model
 
 ```{r}
 
-num_seq <- nrow(pos_norm[[1]])
+num_seq <- nrow(pos_rel[[1]])
 
-plot(type="n", xlim <- c(1,250), ylim <- c(0.6, 0.1), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main="Mean relevances of positive sequences in models")
-lines(colSums(pos_norm[[1]])/num_seq, col="blue")
-lines(colSums(pos_norm[[2]])/num_seq, col="red")
-lines(colSums(pos_norm[[3]])/num_seq, col="orange")
-lines(colSums(pos_norm[[4]])/num_seq, col="black")
-lines(colSums(pos_norm[[5]])/num_seq, col="purple")
+plot(type="n", xlim <- c(1,250), ylim <- c(min(as.data.frame(pos_rel)), max(as.data.frame(pos_rel))), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main="Mean relevances of positive sequences in models")
+lines(colSums(pos_rel[[1]])/num_seq, col="blue")
+lines(colSums(pos_rel[[2]])/num_seq, col="red")
+lines(colSums(pos_rel[[3]])/num_seq, col="orange")
+lines(colSums(pos_rel[[4]])/num_seq, col="black")
+lines(colSums(pos_rel[[5]])/num_seq, col="purple")
 
 legend("topright", legend=c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5"),
        col=c("blue", "red", "orange", "black", "purple"), lty=1, cex=0.8)
@@ -885,14 +953,14 @@ Every model has a very similar distribution of relevances for their positive seq
 
 ```{r}
 
-num_seq <- nrow(neg_norm[[1]])
+num_seq <- nrow(neg_rel[[1]])
 
-plot(type="n", xlim <- c(1,250), ylim <- c(0.8, 0), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main="Mean relevances of negative sequences in models")
-lines(colSums(neg_norm[[1]])/num_seq, col="blue")
-lines(colSums(neg_norm[[2]])/num_seq, col="red")
-lines(colSums(neg_norm[[3]])/num_seq, col="orange")
-lines(colSums(neg_norm[[4]])/num_seq, col="black")
-lines(colSums(neg_norm[[5]])/num_seq, col="purple")
+plot(type="n", xlim <- c(1,250), ylim <-  c(min(as.data.frame(neg_rel)), max(as.data.frame(neg_rel))), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main="Mean relevances of negative sequences in models")
+lines(colSums(neg_rel[[1]])/num_seq, col="blue")
+lines(colSums(neg_rel[[2]])/num_seq, col="red")
+lines(colSums(neg_rel[[3]])/num_seq, col="orange")
+lines(colSums(neg_rel[[4]])/num_seq, col="black")
+lines(colSums(neg_rel[[5]])/num_seq, col="purple")
 
 legend("topright", legend=c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5"),
        col=c("blue", "red", "orange", "black", "purple"), lty=1, cex=0.8)
@@ -910,8 +978,8 @@ As for which model to select, we will just pick the 1st model, since they are al
 i = 1
 
 
-  pr_norm <- pos_norm[[i]] # The positive and negative relevances of the current model
-  nr_norm <- neg_norm[[i]]
+  pr_norm <- pos_rel[[i]] # The positive and negative relevances of the current model
+  nr_norm <- neg_rel[[i]]
   
   plot(type="n", xlim <- c(1,250), c(min(pr_norm,nr_norm), max(pr_norm,nr_norm)), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main=paste0("Relevances of every positive and negative sequence in model number ",i))
   for (j in 1:nrow(pr_norm)){
@@ -950,6 +1018,8 @@ There are a couple things that we would like to point out:
 
 These are interesting facts, but we need more than 20 sequences to study these cases, since they could be isolated ocurrences. We will load a second set of relevances, with 500 sequences instead of 20. This relevances have been calculated using the relevances from model 5.
 
+## Loading the relevances of more sequences
+
 ```{r}
 pos_rel <- read.csv("../Results/Relevances/posRelevances", sep=",", stringsAsFactors = FALSE)[,11:260]
 neg_rel <- read.csv("../Results/Relevances/negRelevances", sep=",", stringsAsFactors = FALSE)[,11:260]
@@ -959,12 +1029,83 @@ relevancesP[1:nrow(pos_rel),11:260] <- pos_rel
 relevancesN[1:nrow(neg_rel),11:260] <- neg_rel
 ```
 
-And now we can do the same plot again, but this time with more sequences.
+Before plotting the relevances again, we will show the distribution of total relevance of the sequences. We want to work only with those sequences with 0.95 total relevance or more, since they are the most representative sequences.
+
+Since the total relevance of the sequence is equivalent to the output of the network, we will use that to know which sequences to use. We only need to check the "model1" attribute of the dataframe, containing said output of the first model for that sequence. Remember that we are only working with the 1st network, not with the five of them.
+
+```{r, fig.show='hold', out.width='50%'}
+
+library(gridExtra)
+
+ggplot(data = relevancesP, aes(x = model1)) + 
+  geom_density() +  
+  labs(title = "Total relevances of positive sequences") + 
+  labs(y = "Density") + 
+  labs(x = "Total relevance") +
+  theme_bw()
+
+ggplot(data = relevancesN, aes(x = 1 - model1)) + 
+  geom_density() +  
+  labs(title = "Total relevances of negative sequences") + 
+  labs(y = "Density") + 
+  labs(x = "Total relevance") + 
+  theme_bw()
+
+```
+
+We can see that the absolute majority of sequences have a total relevance of almost 1. We can simply plot the number of sequences of relevance <0.95 versus the number of sequences with total relevance above that number.
+
+```{r, fig.show='hold', out.width='50%'}
+library(ggthemes)
+
+ggplot(relevancesP, aes(model1 > 0.95)) +
+  geom_bar(aes(fill = (model1 > 0.95))) + 
+  labs(title="Positive sequences", x = ">0.95 Total relevance", y="Number of sequences", fill="Total relevance >0.95") +
+  theme_bw()
+
+ggplot(relevancesN, aes((1 - model1) > 0.95)) +
+  geom_bar(aes(fill = ((1 - model1) > 0.95))) + 
+  labs(title="Negative sequences", x = ">0.95 Total relevance", y="Number of sequences", fill="Total relevance >0.95") +
+  theme_bw()
+
+
+```
+
+As we thoutgh, the vast majority of sequences have a relevance higher than 0.95. But since not all of them are above this threshold, we will remove those who are not so that we will only work with those sequences that are truly trustworthy.
 
 ```{r}
-norm <- normalizeDF(pos_rel, neg_rel)
-pos_norm <- norm[[1]]
-neg_norm <- norm[[2]]
+# Filtering those sequences with total relevances lower than 0.95
+pos_rel_best <- pos_rel[relevancesP$model1[1:nrow(pos_rel)] > 0.95,]
+neg_rel_best <- neg_rel[(1 - relevancesN$model1[1:nrow(neg_rel)]) > 0.95,]
+
+```
+
+We will check that all these sequences have total relevances greater than 0.95. We will also select only those sequences whose relevance we know:
+
+```{r, fig.show='hold', out.width='50%'}
+
+relevancesP_best <- relevancesP[1:nrow(pos_rel),][relevancesP$model1[1:nrow(pos_rel)] > 0.95,]
+relevancesN_best <- relevancesN[1:nrow(neg_rel),][(1 - relevancesN$model1[1:nrow(neg_rel)]) > 0.95,]
+
+ggplot(relevancesP_best, aes(model1 > 0.95)) +
+  geom_bar(aes(fill = (model1 > 0.95))) + 
+  labs(title="Positive sequences", x = ">0.95 Total relevance", y="Number of sequences", fill="Total relevance >0.95") +
+  theme_bw()
+
+ggplot(relevancesN_best, aes((1 - model1) > 0.95)) +
+  geom_bar(aes(fill = ((1 - model1) > 0.95))) + 
+  labs(title="Negative sequences", x = ">0.95 Total relevance", y="Number of sequences", fill="Total relevance >0.95") +
+  theme_bw()
+
+
+```
+
+And now we can do the relevance plot again, but this time with more sequences.
+
+```{r}
+
+pos_norm <- pos_rel_best
+neg_norm <- neg_rel_best
 
 plot(type="n", xlim <- c(1,250), c(min(pos_norm, neg_norm), max(pos_norm, neg_norm)), xlab = "Position of the character in the sequence", ylab="Relevance of the character")
 
@@ -994,6 +1135,8 @@ legend("topright", legend=c("Positive", "Negative"),
        col=c("blue", "red"), lty=1, cex=0.8)
 
 ```
+
+## More relevance representations
 
 We can see that this last plot is very difficult to interpret, due to the high density of lines. For that reason, we have to think of an alternative representation. 
 
@@ -1042,6 +1185,49 @@ legend("topright", legend=c("Positive no padding", "Negative no padding", "Posit
 
 ```
 
-In this plot we can observe that, with some exceptions in certain small sections, sequences with no padding characters tend to have higher relevances. This could mean that our padding character is a handicap for the network trainning, and that an alternative could be desirable. 
+In this plot we can observe that sequences with no padding characters tend to have higher variation, while the sequences with padding have more consistent relevances. For the moment, we will remove from the plots those sequences that contain any padding character. Maybe later we will study this padding character again.
 
-We can be sure that the first character for some reason has a very high relevance. We could check this with more detail. We could also try to contrast this information with the relevances of other models just to be sure.
+This would be the resultant plot without the sequences with padding:
+
+```{r}
+
+plot(type="n", xlim <- c(1,250), c(min(mean_nopad_pos_norm, mean_nopad_neg_norm), max(mean_nopad_pos_norm, mean_nopad_neg_norm)), xlab = "Position of the character in the sequence", ylab="Mean relevance of the character")
+lines(mean_nopad_pos_norm, col="blue")
+lines(mean_nopad_neg_norm, col="red")
+legend("topright", legend=c("Positive no padding", "Negative no padding"),
+       col=c("blue", "red"), lty=1, cex=0.8)
+  
+
+```
+
+Without the padding sequences, positive and negative sequences still seem very similar. We can plot the difference between them to see more clearly their differences:
+
+```{r}
+
+mean_difference <- mean_nopad_pos_norm - mean_nopad_neg_norm
+ggplot(as.data.frame(mean_difference), aes(x = 1:length(mean_difference), y = mean_difference)) + 
+  geom_line(aes(col="Value of Positive - Negative"))+ 
+  geom_hline(yintercept = 0) +
+  labs(x = "Number of the character", y="Difference", title="Value of mean positive relevance minus mean negative relevance", color="") + 
+  theme_bw()
+
+
+```
+
+Now we can easily see that the negative sequences have bigger relevances at the start and smaller at the end, while the middle remains territory of both. We can also check which if one of the two types has higher mean relevance:
+
+```{r}
+
+positive_relevance <- sum(mean_nopad_pos_norm)
+negative_relevance <- sum(mean_nopad_neg_norm)
+relevance_comparison = data.frame(Relevances = c(positive_relevance, negative_relevance), Source = c("Positive", "Negative"), stringsAsFactors = FALSE)
+
+ggplot(relevance_comparison, aes(x = Source, y = Relevances)) +
+  geom_bar(stat="Identity", fill="steelblue") + 
+  geom_text(aes(label=Relevances), vjust=-0.3, size=3.5)+
+  labs(x="Type of Sequence", title="Comparison of mean total relevances", y="Relevance") +
+  theme_bw()
+
+```
+
+The total relevance of the mean of both sequences is more or less the same, as seen in this plot. This means that the areas were the positive sequences have more relevance compensate those in which the negative sequences have the higher value. But since the total relevance only depends on the output ot the network for that particular sequence, we can only conclude that the network had similar results evaluating sequences of each type.
