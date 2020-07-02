@@ -154,8 +154,8 @@ PosSequences$X5utr[1]  # The positive sequence, with some characters added so it
 NegSequences$X5utr[1]  # The negative sequence, trimmed so it becomes 250 characters long
 
 # to_onehot:   TGCCAA --> 00010010010010001000    (A = 1000, C = 0100, G = 0010, T = 0001)
-PosSequences$X5utr <- to_onehot(PosSequences$X5utr)
-NegSequences$X5utr <- to_onehot(NegSequences$X5utr)
+PosSequences$X5utr <- padding_onehot(PosSequences$X5utr)
+NegSequences$X5utr <- padding_onehot(NegSequences$X5utr)
 
 PosSequences$X5utr[1]  # The positive sequence, reversed, padded and one-hot encoded
 NegSequences$X5utr[1]  # The negative sequence, reversed, trimmed and one-hot encoded
@@ -338,10 +338,19 @@ Now it is time to build our model. It follows the specifications mentioned in th
     metrics = c('accuracy')
   )
 ```
+```{r, echo=FALSE}
+config = tensorflow::tf$ConfigProto(gpu_options = list(allow_growth = TRUE))
+sess = tensorflow::tf$Session(config = config)
+keras::k_set_session(session = sess)
+```
 
 And now we train that model with the data obtained. After each training epoch, we will obtain certain statistics related to the sensitivity and specificity of the model, since they are not metrics that Keras can return from the model.
 
 ```{r}
+with(tf$device("/device:GPU:0"), {
+predictions <- list()
+models <- list()
+all_history <- list()
 
 for (i in 1:5){
   
@@ -373,17 +382,87 @@ for (i in 1:5){
       verbose = 2)
     
     history <- c(history, historial)
+  
+  ## Calculating sensitivity and specificity
+    pred <- modelConvolu %>% predict(test.x[[i]], batch_size = batch_size)
+    prediction.y = round(pred)
+    # Confusion matrix
+    CM = table(prediction.y, test.y[[i]])
+   
+    if (length(CM) > 2){
+      sens <- c(sens,sensitivity(CM))
+      spec <- c(spec,specificity(CM))
+    }
+    else {  # This happens in the weird cases the model only predicts positive or negative
+      if (sum(grepl(0,prediction.y)) > 0){
+        sens <- c(sens, 0)
+        spec <- c(spec, 1)
+      }
+      else{
+        sens <- c(sens, 0)
+        spec <- c(spec, 1)
+      }
+    }
   }
   ## Prediction 
+  predictions <- append(predictions, list(prediction.y))
   pred <- modelConvolu %>% predict(finalSequencesP, batch_size = batch_size)
-  genesP[,4+i] = round(pred)
+  genesP[,5+i] = pred
   
   pred <- modelConvolu %>% predict(finalSequencesN, batch_size = batch_size)
-  genesN[,4+i] = round(pred)
+  genesN[,5+i] = pred
+  
+  models <- append(models, modelConvolu)
+  all_history <- append(all_history, historial)
+  
 }
-
+})
 ```
 
+```{r, interpretandoDatos}
+nums <- NULL
+nums <- (1:(epochs))*2
+valaccs <- NULL
+accs <- NULL
+valoss <- NULL
+loss <- NULL
+for (i in nums){ 
+  valaccs <- c(valaccs,history[i]$metrics$val_acc) 
+  accs <- c(accs,history[i]$metrics$acc) 
+  loss <- c(loss,history[i]$metrics$loss) 
+  valoss <- c(valoss,history[i]$metrics$val_loss) 
+  }
+
+plot(valoss, ylim = c(min(valoss,loss), max(valoss,loss)), cex = 0, ylab="loss", xlab="epochs")
+lines(valoss, col="green")
+lines(loss, col="blue")
+legend("bottomleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+
+plot(valaccs, ylim = c(min(valaccs,accs), max(valaccs,accs)), cex = 0, ylab = "accuracy", xlab = "epochs")
+lines(valaccs, col="green")
+lines(accs, col="blue")
+legend("topleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+plot(sens, ylim = c(min(sens, spec, sens + spec - 1), max(sens, spec, sens+spec-1)), cex = 0)
+lines(sens,col="red")
+lines(spec,col="blue")
+lines((sens + spec) -1, col="orange")
+legend("bottomright", legend=c("Specificity","Sensitivity", "Youden"), col=c("blue","red", "orange"), lty = 1)
+
+
+
+mean_acc = sum(tail(valaccs,n=7))/7 # Estimation of accuracy obtained
+mean_acc
+# 0.72999 con CBAXXX
+# 0.643932 con XXXABC
+
+confusion <- table(predictions[[1]], test.y[[1]])
+for (i in 2:5){
+  confusion <- confusion + table(predictions[[i]], test.y[[i]])
+}
+confusion
+```
 
 Borrar esto de abajo, es solo para guardar cosas pa luego
 
@@ -523,28 +602,28 @@ Now just a small fix for clarity (...)
 
 ```{r}
 for (i in 1:5) {
-  genesN[,(4+i)] <- 1 - genesN[,(4+i)]
+  finalEvalN[,(4+i)] <- 1 - finalEvalN[,(4+i)]
 }
 ```
 
 
 ```{r}
 
-genesP$totalSum <- genesP$model1 + genesP$model2 + genesP$model3 + genesP$model4 + genesP$model5
-genesP$diseaseAssociation <- 1
+finalEvalP$totalSum <- finalEvalP$model1 + finalEvalP$model2 + finalEvalP$model3 + finalEvalP$model4 + finalEvalP$model5
+finalEvalP$diseaseAssociated <- 1
 #write.csv(genesP,file="Results/finalEvaluationP", row.names = FALSE, col.names = FALSE, quote = FALSE)
 #genesP
 
-genesN$totalSum <- genesN$model1 + genesN$model2 + genesN$model3 + genesN$model4 + genesN$model5
-genesN$diseaseAssociation <- 0
+finalEvalN$totalSum <- finalEvalN$model1 + finalEvalN$model2 + finalEvalN$model3 + finalEvalN$model4 + finalEvalN$model5
+finalEvalN$diseaseAssociated <- 0
 #write.csv(genesN,file="Results/finalEvaluationN", row.names = FALSE, col.names = FALSE, quote = FALSE)
 #genesN
-allGenes <- rbind(genesP,genesN)
+allGenes <- rbind(finalEvalP,finalEvalN)
 write.csv(allGenes,file="Results/finalEvaluationAllGenes", row.names = FALSE, col.names = FALSE, quote = FALSE)
 write.csv(allGenes,file="Data/finalEvaluationAllGenes", row.names = FALSE, col.names = FALSE, quote = FALSE)
 
 
-allFrame <- rbind(frameP,frameN)
+allFrame <- rbind(summaryP,summaryN)
 write.csv(allFrame,file="Results/stats",row.names = FALSE, col.names = FALSE, quote = FALSE)
 
 ```

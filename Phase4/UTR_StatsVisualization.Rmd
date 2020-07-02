@@ -29,12 +29,12 @@ Now we plot the length of the sequences
 # plot(table(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 0]))*100/sum(UTRseq$diseaseAssociation == 0), xlab="Lengths", ylab="# of Sequences", main="Length of Negative sequences")
 # lines(table(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 1]))*100/sum(UTRseq$diseaseAssociation == 1), col="red")
 
-plot(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 0])), col="blue", xlab="Lengths", ylab="# of Sequences", main="Length of sequences")
+plot(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 0])), col="blue", xlab="Lengths", ylab="Density of Sequences", main="Length of sequences")
 lines(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 1])), col="red")
 legend("topright",legend=c("Negative sequences","Positive sequences"),
        fill=c("blue","red"),cex=0.7)
 
-plot(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 0])), col="blue", xlim = c(-1,300), xlab="Lengths", ylab="# of Sequences", main="Length of sequences")
+plot(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 0])), col="blue", xlim = c(-1,300), xlab="Lengths", ylab="Density of Sequences", main="Length of sequences")
 lines(density(nchar(UTRseq$raw5utr[UTRseq$diseaseAssociation == 1])), col="red")
 legend("topright",legend=c("Negative sequences","Positive sequences"),
        fill=c("blue","red"),cex=0.7)

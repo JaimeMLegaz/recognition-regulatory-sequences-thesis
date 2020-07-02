@@ -1,0 +1,16 @@
+finalEvaluation y finalEvaluationAllGenes
+
+Contienen info sobre la secuencia (ID Ensembl, secuencia, secuencia raw...), 
+el resultado en los 5 modelos y una indicación de si fueron usados para entrenamiento o validación
+
+--------------------------------------------
+
+stats
+
+TrainedRight,TrainedWrong,UntrainedRight,UntrainedWrong,RateTrainedRight,RateUntrainedRight,DiseaseAssociated
+
+Contiene info sobre el % de aciierto de los genes según fueron usados para entrenar o no
+
+Generado por el fichero UTR_finalEvaluation
+
+--------------------------------------------

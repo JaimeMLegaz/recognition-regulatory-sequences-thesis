@@ -20,13 +20,13 @@ As in this example we are working with the protein sequences of macro domains co
 
 ```{r}
 #Convert csv to fasta
-cesev <- read.csv("Results/badseqs.tsv", stringsAsFactors = FALSE, header=TRUE, sep="\t")
+cesev <- read.csv("../Results/badseqs.tsv", stringsAsFactors = FALSE, header=TRUE, sep="\t")
 DNA_seq <- DNAStringSet(x=cesev$raw5utr, use.names=TRUE)
 ```
 
 ```{r}
 library(Biostrings)
-prots = readDNAStringSet("Results/badseqs.tsv")
+prots = readDNAStringSet("../Results/badseqs.tsv")
 prots
 ```
 

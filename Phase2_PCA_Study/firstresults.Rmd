@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 In this work we want to extract the results from the five neural models. Furthermore, we aim at defining a general metodology for evaluation of the results. We firstly read all results in which, for all sequences, we know when it was used for traning, and whether the CNN made it right when predicting, regardless it was used for training or not.
 
 ```{r}
-results = read.csv("Results/finalEvaluation",
+results = read.csv("../Results/finalEvaluation",
                      stringsAsFactors=F)
 ```
 
@@ -110,7 +110,7 @@ seqs = lapply(1:5,function(x){
                   final <<- rbind(final,cbind(rep(x,length(oneseq)),oneseq))
                 })
 colnames(final) = c("missed","raw5utr")
-write.table(final,"Results/badseqs.tsv",
+write.table(final,"../Results/badseqs.tsv",
             sep="\t",col.names=T,quote=F,row.names=F)
 ```
 
@@ -122,7 +122,7 @@ Now we can try to characterise those and find why they are hard to learn.
 
 This is going to be an easy one. If we look at how many different sequences we can get that were classified correctly for all the five models, 
 
-```{r}
+```{r, echo=FALSE}
 sequences = results$raw5utr[results$diseaseAssociated == 1 & results$totalSum == 5]
 sequences
 ```
@@ -130,7 +130,7 @@ sequences
 we can see we get up to 2871 sequences. More than enough for what we want.
 
 ```{r}
-write.table(sequences,"Results/goodseqs.tsv",
+write.table(sequences,"../Results/goodseqs.tsv",
             sep="\t",col.names=F,quote=F,row.names=F)
 ```
 

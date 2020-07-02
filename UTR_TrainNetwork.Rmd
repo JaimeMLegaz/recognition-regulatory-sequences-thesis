@@ -103,7 +103,9 @@ Now it is time to build our model. It follows the specifications mentioned in th
   
   modelConvolu <- keras_model_sequential()
   modelConvolu %>% 
-    layer_conv_1d(filters = 48, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
+    layer_conv_1d(filters = 192, kernel_size = 24, activation = "relu", input_shape = input_shape)%>%
+    layer_max_pooling_1d() %>%
+    layer_dropout(0.25) %>%
     layer_flatten() %>%
     layer_dense(units = 50, activation = 'relu') %>% 
     layer_dense(units = 1, activation="sigmoid") %>%
@@ -128,7 +130,14 @@ for (i in 1:5){
   history <- NULL
  
   
-   modelConvolu <- keras_model_sequential()
+#   modelConvolu <- keras_model_sequential()
+#  modelConvolu %>% 
+#    layer_conv_1d(filters = 48, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
+#    layer_flatten() %>%
+#    layer_dense(units = 50, activation = 'relu') %>% 
+#    layer_dense(units = 1, activation="sigmoid")
+  
+     modelConvolu <- keras_model_sequential()
   modelConvolu %>% 
     layer_conv_1d(filters = 48, kernel_size = 75, activation = "relu", input_shape = input_shape)%>%
     layer_flatten() %>%
@@ -214,5 +223,9 @@ mean_acc = sum(tail(valaccs,n=7))/7 # Estimation of accuracy obtained
 mean_acc
 # 0.72999 con CBAXXX
 # 0.643932 con XXXABC
+
+```
+
+```{r}
 
 ```

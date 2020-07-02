@@ -154,8 +154,8 @@ PosSequences$X5utr[1]  # The positive sequence, with some characters added so it
 NegSequences$X5utr[1]  # The negative sequence, trimmed so it becomes 250 characters long
 
 # to_onehot:   TGCCAA --> 00010010010010001000    (A = 1000, C = 0100, G = 0010, T = 0001)
-PosSequences$X5utr <- to_onehot(PosSequences$X5utr)
-NegSequences$X5utr <- to_onehot(NegSequences$X5utr)
+PosSequences$X5utr <- encode_sequence(PosSequences$X5utr)
+NegSequences$X5utr <- encode_sequence(NegSequences$X5utr)
 
 PosSequences$X5utr[1]  # The positive sequence, reversed, padded and one-hot encoded
 NegSequences$X5utr[1]  # The negative sequence, reversed, trimmed and one-hot encoded
@@ -257,14 +257,14 @@ test.x <- list()
 test.y <- list()
 
 for (i in 1:5){
-  train.x <- append(train.x, list(data.matrix(trains[[i]][,1:1250])))
-  train.y <- append(train.y, list(data.matrix(trains[[i]][,1251])))
+  train.x <- append(train.x, list(data.matrix(trains[[i]][,1:750])))
+  train.y <- append(train.y, list(data.matrix(trains[[i]][,751])))
   
-  test.x <- append(test.x, list(data.matrix(tests[[i]][,1:1250])))
-  test.y <- append(test.y, list(data.matrix(tests[[i]][,1251])))
+  test.x <- append(test.x, list(data.matrix(tests[[i]][,1:750])))
+  test.y <- append(test.y, list(data.matrix(tests[[i]][,751])))
 
-  train.x[[i]] <- array_reshape(train.x[[i]], c(nrow(trains[[i]]),1250,1))
-  test.x[[i]] <- array_reshape(test.x[[i]], c(nrow(tests[[i]]),1250,1))
+  train.x[[i]] <- array_reshape(train.x[[i]], c(nrow(trains[[i]]),750,1))
+  test.x[[i]] <- array_reshape(test.x[[i]], c(nrow(tests[[i]]),750,1))
  }
 ```
 
@@ -290,10 +290,10 @@ dfp[indx] <- lapply(dfp[indx], function(x) as.character(x))
 
 # We have got a dataframe with the ensembl_id, sequence and hgnc symbol in genesP and genesN, and a dataframe with the split sequence and hgnc symbol in dfp and dfn
 
-finalSequencesN <- data.matrix(dfn[,1:1250])
-finalSequencesN <- array_reshape(finalSequencesN,c(nrow(finalSequencesN),1250,1))
-finalSequencesP <- data.matrix(dfp[,1:1250])
-finalSequencesP <- array_reshape(finalSequencesP,c(nrow(finalSequencesP),1250,1))
+finalSequencesN <- data.matrix(dfn[,1:750])
+finalSequencesN <- array_reshape(finalSequencesN,c(nrow(finalSequencesN),750,1))
+finalSequencesP <- data.matrix(dfp[,1:750])
+finalSequencesP <- array_reshape(finalSequencesP,c(nrow(finalSequencesP),750,1))
 
 genesP$model1 <- 0
 genesP$model2 <- 0
@@ -314,7 +314,7 @@ Now it is time to build our model. It follows the specifications mentioned in th
 ```{r}
   batch_size <- 125
   epochs <- 125 
-  input_shape <- c(1250,1)
+  input_shape <- c(750,1)
   learn_rate = 0.0001
   
   modelConvolu <- keras_model_sequential()
