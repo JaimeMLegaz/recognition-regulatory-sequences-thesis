@@ -1,0 +1,169 @@
+---
+title: "Training the network of the UTR experiment"
+author: "Jaime Martínez Legaz"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    pdf_document: default
+    toc_depth: 3
+    number_sections: true
+    theme: lumen
+---
+
+
+```{r, eval=FALSE, echo=FALSE}
+library(tensorflow)
+
+with(tf$device("/gpu:0"), {
+
+})
+
+```
+
+```{r, include=FALSE}
+library(biomaRt)
+library(SetupSequences)
+library(keras)
+library(caret)
+library(tidyverse)
+library(BSgenome)
+library(BSgenome.Hsapiens.UCSC.hg38.masked)
+library(GenomicRanges)
+```
+
+# Obtaining the sequences
+
+We have to obtain the sequences we will work with. This is the code that will achieve that.
+
+```{r}
+ml_table = readRDS(file = "../Data/ml_data_rf.rds") %>% 
+  dplyr::select(class) %>% 
+  rownames_to_column("id") %>% 
+  tidyr::separate(id, c("gene", "seqnames", "start", "end", "strand", "tmp"), sep=":", remove=FALSE)
+  
+
+# converting to Granges object
+ml_table_gr = makeGRangesFromDataFrame(ml_table, keep.extra.columns = TRUE)
+
+# adding "chr" in front of seqnames
+newStyle <- mapSeqlevels(seqlevels(ml_table_gr), "UCSC")
+ml_table_gr <- renameSeqlevels(ml_table_gr, newStyle)
+
+# Extract sequences using the package BSgenome
+data = data.frame(
+  id = ml_table$id,
+  class = ml_table$class,
+  sequence = BSgenome::getSeq(Hsapiens, ml_table_gr, as.character = TRUE) #as.character=TRUE does not work?
+)
+data$sequence <- as.character(data$sequence)
+table(data$class)
+```
+
+Next step is grouping all the non 3'UTR sequences into a group, so that we can compare 3'UTR sequences with non 3'UTR sequences regardless of the subtype.
+
+```{r}
+old_data <- data # Needed for the valdation tests
+
+data <- data[data$class == "ICE" | data$class == "UTR",]
+data$detailclass = data$class
+data$class = ifelse(data$class %in% "UTR", "UTR", "Non_3_UTR")  %>% as.factor() %>% as.integer()
+data$class <- data$class - 1 #0 = No3UTR 1 = 3UTR
+table(data$class)
+```
+
+```{r}
+# Validation test
+test1 = table(data$class)["0"] == nrow(data) - table(old_data$class)["UTR"]; if (test1 == FALSE) print ("ERROR 1")
+test2 = table(data$class)["1"] == table(old_data$class)["UTR"]; if (test2 == FALSE) print ("ERROR 2")
+
+```
+
+We will separate these sequences into the "Positive" group (3'UTR) and the "Negative" group (non-3'UTR).
+
+```{r}
+PositiveSequences = data[data$class == 1,]
+NegativeSequences = data[data$class == 0,]
+```
+
+# Studying different lengths of sequences
+
+## With total numbers
+
+```{r}
+
+sizes <- seq(100,400)
+num_total <- NULL
+num_pos <- NULL
+num_neg <- NULL
+
+for (i in sizes){
+  npos <- sum(nchar(PositiveSequences$sequence) > i)
+  nneg <- sum(nchar(NegativeSequences$sequence) > i)
+  ntot <- (sum(nchar(PositiveSequences$sequence) > i) + sum(nchar(NegativeSequences$sequence) > i))
+  
+  num_total <- c(num_total, ntot)
+  num_pos <- c(num_pos, npos)
+  num_neg <- c(num_neg, nneg)
+}
+
+df <- data.frame(sizes = sizes, npos <- num_pos, nneg <- num_neg, ntotal <- num_total)
+
+```
+
+```{r}
+
+ggplot(df, aes(x=sizes)) + 
+  geom_line(aes(y = npos, col = "Number of Positive Sequences")) + 
+  geom_line(aes(y = nneg, col = "Number of Negative Sequences")) + 
+  geom_line(aes(y = ntotal, col = "Total number of Sequences")) + 
+  labs(x = "Min length of the sequences", y="Number of longer sequences")
+  
+
+```
+
+## With percentages
+
+```{r}
+
+sizes <- seq(100,400)
+perc_total <- NULL
+perc_pos <- NULL
+perc_neg <- NULL
+
+for (i in sizes){
+  ppos <- sum(nchar(PositiveSequences$sequence) > i)/nrow(PositiveSequences)
+  pneg <- sum(nchar(NegativeSequences$sequence) > i)/nrow(NegativeSequences)
+  ptot <- (sum(nchar(PositiveSequences$sequence) > i) + sum(nchar(NegativeSequences$sequence) > i))/(nrow(PositiveSequences) + nrow(NegativeSequences))
+  
+  perc_total <- c(perc_total, ptot)
+  perc_pos <- c(perc_pos, ppos)
+  perc_neg <- c(perc_neg, pneg)
+}
+
+df <- data.frame(sizes = sizes, ppos <- perc_pos, pneg <- perc_neg, ptotal <- perc_total)
+
+```
+
+```{r}
+
+ggplot(df, aes(x=sizes)) + 
+  geom_line(aes(y = ppos, col = "% of Positive Sequences")) + 
+  geom_line(aes(y = pneg, col = "% of Negative Sequences")) + 
+  geom_line(aes(y = ptotal, col = "Total % of Sequences")) + 
+  labs(x = "Min length of the sequences", y="Percentage of longer sequences")
+  
+
+```
+
+And lastly, we will check exactly what length should the sequence have in order to be as balanced as possible.
+
+```{r}
+
+99 + which(abs(num_pos - num_neg) == min(abs(num_pos - num_neg)))
+
+```
+
+So 202 is the desired length of the sequences.

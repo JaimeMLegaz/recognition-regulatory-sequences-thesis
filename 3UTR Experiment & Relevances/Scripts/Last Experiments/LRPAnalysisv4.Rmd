@@ -1,0 +1,247 @@
+---
+title: "Sequence analysis of hot loci in sequences v3"
+author: "Juan A. Botía"
+date: "25th/May/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this document we offer a brief analysis of the LRP outcome from a set of sequences provided by Jaime for training the networks. Note that the sequences only contain positive examples (3´UTRs) and ICE type sequences as negative. Still pending what we would do with the rest of sequences we need to add.
+
+Here we read both files and incorporate them into a single data frame.
+
+```{r}
+pos = read.table("../../Results/Relevances/posRelevances", 
+                 stringsAsFactors = FALSE, header = TRUE, sep=",", colClasses="character")
+pos[,6:213] = as.double(unlist(pos[,6:213]))
+pos$class = rep(1,nrow(pos))
+
+neg = read.table("../../Results/Relevances/negRelevances", 
+                 stringsAsFactors = FALSE, header = TRUE, sep=",", colClasses="character")
+neg[,6:213] = as.double(unlist(neg[,6:213]))
+
+allseqs = rbind(pos,neg)
+
+str(allseqs)
+```
+
+# New part, reversing and chopping before any analysis
+
+What we will do here is to revert the sequence and then chopp it on its end, up to 202 sequences.
+Therefore, we are actually analyzing tye end of the sequences here.
+
+```{r}
+library(SetupSequences)
+set.seed(12345)
+allseqs = allseqs[sample(1:nrow(allseqs),5000),]
+allseqs$rawseq <- strReverse(allseqs$rawseq)
+allseqs$rawseq <- padding_sequence(allseqs$rawseq, len=202)
+```
+
+
+# Clustering sequences based on LRP relevance results
+
+In order to analyse LRP sequences in a methodical way, we will use hierarchical clustering to detect groupings of sequences. Note that here, it is not relevant whether a sequence belongs to positive or negative examples because what LRP does is detecting which positions in the string are relevant to take decissions, therefore what is actually relevant is the position within the string, and not the class it belongs to. Because the position in the string will be the same in strings belonging to both classes.
+
+We generate a distance matrix first
+
+```{r,eval=F}
+myd = dist(allseqs[,12:213],method="euclidean")
+saveRDS(myd,"../../Data/mydistance.rds")
+```
+
+Now we read, cluster and plot
+
+```{r}
+myd = readRDS("../../Data/mydistance.rds")
+myclust = fastcluster::hclust(myd)
+plot(myclust,cex=0.5)
+```
+
+And by visual inspection we see there might be at leat 5 clusters with potential interest.
+
+
+```{r}
+relevances = allseqs[,12:ncol(allseqs)]
+clusters = 5
+mytree = cutree(myclust,k=clusters) 
+cols = rainbow(clusters)
+
+plot(apply(relevances[mytree == 1,],2,mean),type="l",
+     ylim=c(min(relevances),max(relevances)),col=cols[1] )
+for(i in 2:clusters){
+    lines(apply(relevances[mytree == i,],2,mean),type="l",
+          col=cols[i])
+  
+}
+```
+
+This plot points something of interest and this is the flat line at 0,
+
+```{r}
+table(mytree)
+summary(apply(relevances[mytree == 5,],2,mean))
+```
+
+So all elements (18) in cluster 5 are all 0. They should be removed.
+
+What we do know is to use the information extracted from the LRP to decide in which interval of all strings to look for relevant k-mers. We will restrict the analysis to 50 DNA bases.
+
+And in order to perform the analysis, we will use a sliding window from the 1s up to the last letter. In each window, of greater width than the k-mer length we are searching for, for a specific k-mer length, we count all possible k-mers of length k, across all positive and negative strings and look for k-mers which are overrepresented in the positive examples (3´UTRs) with Mann-Whitney test.
+
+We will look for k-mers with $k\in \{7, 8, 9\}$, moving the window 5 positions to the right each time. The window width is 10.
+
+```{r,eval=F}
+library(stringi)
+library(Biostrings)
+rm(myd)
+window = 10
+wls = seq(1,70,5)
+kmervals = 7:9
+mytests = NULL
+
+for(wleft in wls){
+  intervalseqs = unlist(lapply(allseqs$rawseq,function(x){
+    stri_sub(x,wleft,wleft + window)
+  }))
+  cat("Window",wleft,",",wleft + window,"\n")
+  
+  mytests = rbind(mytests,do.call(rbind,lapply(kmervals,function(x){
+    cat("K-mer",x,"\n")
+    
+    alltests = NULL
+    mymask = allseqs$class == "1" # Selects every positive sequence
+    alp = oligonucleotideFrequency(DNAStringSet(intervalseqs),width=x) # obtains the frequency of all oligonucleotids in the interval of wleft:wleft+window
+    for(i in 1:ncol(alp)){ # For every oligonucleotid 
+      #print(alp[mymask,i])
+      #hist(alp[!mymask,i])
+      #print(alp[!mymask,i])
+      pval = t.test(x=alp[mymask,i],y=alp[!mymask,i],paired = F,
+                         alternative = "greater")$p.value
+      
+      if(!is.na(pval) && pval*ncol(alp) < 0.05){
+        cat("Significant for k",x,"and k-mer",colnames(alp)[i],"with p",pval,"\n")
+        cat("Proportion",sum(alp[mymask,i])," vs ",sum(alp[!mymask,i]),"\n")
+        alltests = rbind(alltests,c(x,colnames(alp)[i],
+                                    sum(alp[mymask,i]),
+                                    sum(alp[!mymask,i]),
+                                    pval,wleft, wleft + window))
+        
+      }
+    }
+    alltests
+  })))
+}
+colnames(mytests) = c("kmerlength","kmer","UTRcount","nonUTRcount","P","wleft","wright")
+knitr::kable(mytests,caption="All tests detected")
+write.csv(mytests,
+          "../../Data/kmertestsv4.csv")
+
+
+
+```
+
+
+
+And now we can also see where is the greatests concentration of differences beteween UTRs and no URLs for all these 500/500 characters
+
+
+```{r}
+kmervals = 7:9
+mytests = read.csv("../../Data/kmertestsv4.csv")
+mytests = mytests[,-1]
+windows = sort(as.numeric(unique(mytests[,7])))
+mydata = matrix(nrow = length(kmervals),ncol=length(windows))
+
+for(i in 1:nrow(mydata)){
+  ldata = table(as.numeric(mytests[mytests[,1] == kmervals[i],7]))
+  mydata[i,] = ldata[match(windows,names(ldata))]
+}
+mydata[is.na(mydata)] = 0
+cols = rainbow(length(kmervals))
+colnames(mydata) = windows
+rownames(mydata) = kmervals
+barplot(mydata,
+        main=paste0("Number of significant tests per window, ks ",
+                    paste0(kmervals,collapse=", ")),
+        las=2,
+        xlab="Window right limit",
+        ylab="# of significant k-mer tests",
+        col=cols)
+legend("topright",fill=cols,legend=kmervals,
+       title="k values")
+```
+
+And by seeing the data directly
+
+```{r}
+mydata
+```
+
+Note we tried more windows to the right but nothing came up.
+And also, the number of times each motif is detected as over-represented in UTRs w.r.t. non UTRs.
+
+```{r}
+sort(table(mytests[,2]),decreasing=T)
+```
+
+
+
+```{r}
+relevants <- mytests
+```
+
+We now evaluate all the sequences with a simple method: If a sequence contains one of these kmers in the window specified, it is classified as 3'UTR. If not, then it is classified as negative.
+
+
+```{r}
+library(stringi)
+library(Biostrings)
+window = 10
+wls = seq(1,70,5)
+kmervals = 7:9
+evals = NULL
+
+predictions <- allseqs[, c("rawseq", "detailclass", "class")]
+predictions$predicted <- 0
+
+for (w in wls){
+  predictions[[as.character(w)]] <- 0
+}
+
+for (len in unique(relevants$kmerlength)) {
+  for (wleft in unique(relevants$wleft[relevants$kmerlength == len])) {
+    print(paste0("kmer-length:", len, ", wleft:", wleft))
+    intervalseqs = unlist(lapply(predictions$rawseq,function(x){
+    stri_sub(x,wleft,wleft + window)
+    })) # The fragment of the sequence correspondant to the selected window
+    
+    alp = oligonucleotideFrequency(DNAStringSet(intervalseqs),width=len)
+    
+    for (kmer in relevants$kmer[(relevants$kmerlength == len) & (relevants$wleft == wleft)]) {
+      predictions$predicted[which(alp[,kmer] == 1)] <- 1
+      predictions[which(alp[,kmer] == 1),as.character(wleft)] <- predictions[which(alp[,kmer] == 1),as.character(wleft)] + 1
+    }
+  } 
+}
+
+
+#knitr::kable(mytests,caption="All tests detected")
+#write.csv(mytests,
+#          "../../Data/kmertestsv4.csv")
+
+
+
+```
+
+Finally, we calculate the accuracy we would obtain if we predict as positive every sequence with at least one significative k-mer in its correspondant window.
+
+```{r}
+acc <- (sum((predictions$predicted == 1) & (predictions$class == 1)) + sum((predictions$predicted == 0) & (predictions$class == 0)))/nrow(predictions)
+acc
+```

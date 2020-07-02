@@ -1,0 +1,1020 @@
+---
+title: "Training the network of the UTR experiment"
+author: "Jaime Martínez Legaz"
+output:
+  html_document:
+    df_print: paged
+---
+
+## DUDAS
+
+- ¿No se obtiene el mismo resultado independientemente del caso?
+
+## Loading the libraries
+
+Loading all required libraries
+
+```{r, eval=FALSE, echo=FALSE}
+library(tensorflow)
+
+with(tf$device("/gpu:0"), {
+
+})
+
+```
+
+```{r}
+library(SetupSequences)
+library(keras)
+library(caret)
+library(stringi)
+```
+
+## Obtaining the sequences
+
+We will create some simple sequences, very easy to differentiate. They will consist of 200 random characters (only T, C and G) and 50 Cs, either at the start of the sequence (positive), or at the end (negative). This way, we will have some easy to differentiate sequences, and we will be able to check if our LRP works as intended.
+
+```{r}
+
+PositiveSequences1 <- stri_rand_strings(500, 100, pattern = "[TGA]")
+PositiveSequences2 <- stri_rand_strings(500, 100, pattern = "[TGA]")
+NegativeSequences1 <- stri_rand_strings(500, 100, pattern = "[TGA]")
+NegativeSequences2 <- stri_rand_strings(500, 100, pattern = "[TGA]")
+
+PositiveSequences3 <- stri_rand_strings(250, 175, pattern = "[TGA]")
+NegativeSequences3 <- stri_rand_strings(250, 175, pattern = "[TGA]")
+
+FalsePositive <- stri_rand_strings(50, 175, pattern = "[TGA]")
+FalseNegative <- stri_rand_strings(50, 175, pattern = "[TGA]")
+
+Cseq <- paste(rep("C",50), collapse="")
+Tseq <- paste(rep("T",50), collapse="")
+miniGset <- paste(rep("G",25), collapse="")
+miniCset <- paste(rep("C",25), collapse="")
+
+PositiveSequences <- paste0(PositiveSequences1,PositiveSequences2,Cseq)
+NegativeSequences <- paste0(NegativeSequences1,NegativeSequences2, Tseq)
+
+PositiveSequencesB <- paste0(PositiveSequences3, miniGset, Cseq)
+NegativeSequencesB <- paste0(NegativeSequences3, miniCset, Tseq)
+
+PositiveSequencesC <- paste0(FalsePositive, miniCset, Cseq)
+NegativeSequencesC <- paste0(FalseNegative, miniGset, Tseq)
+
+PositiveSequences <- c(PositiveSequences, PositiveSequencesB, PositiveSequencesC)
+NegativeSequences <- c(NegativeSequences, NegativeSequencesB, NegativeSequencesC)
+
+```
+
+## Treating the sequences
+
+```{r}
+# to_onehot:   TGCCAA --> 00010010010010001000    (A = 1000, C = 0100, G = 0010, T = 0001)
+PosSequences <- simple_onehot(PositiveSequences)
+NegSequences <- simple_onehot(NegativeSequences)
+
+
+# Validation
+test1 = all(sapply(list(min(nchar(PosSequences)),max(nchar(PosSequences)), mean(nchar(PosSequences))), function(x) x == 1000))
+test2 = all(sapply(list(min(nchar(NegSequences)),max(nchar(NegSequences)), mean(nchar(NegSequences))), function(x) x == 1000))
+if (test1) print ("Correct 1") else print ("ERROR 1")
+if (test2) print ("Correct 2") else print ("ERROR 2")
+
+# Final check: Since some of the sequences might be corrupt, we will delete the ones that are corrupt, if they exist
+# We can know if a sequence is corrupt by looking for the W character. When one-hot encoding, we encoded everything that was not an A, T, C or G with a "W"
+
+if (any(grepl("W",PosSequences))){
+  print("Found 'W'")
+  PosSequences <- PosSequences[-which(grepl("W",PosSequences)),]
+}
+  
+if (any(grepl("W",NegSequences))){
+  print("Found 'W'")
+  NegSequences <- NegSequences[-which(grepl("W",NegSequences)),]
+}
+```
+
+## Training the network
+
+
+```{r}
+posNum <- length(PosSequences) # Number of positive sequences
+SeqUTR <- append(PosSequences,NegSequences)
+
+old_seq = SeqUTR[1] # For validation tests
+
+n2 <- nchar(SeqUTR[1]) -1 # Number of divisions to make
+
+secuenciasOH <- sapply(1 + 1*0:n2, function(z) substr(SeqUTR, z, z))  # Obtaining the split characters
+df <- data.frame(secuenciasOH, "Value" = 0) # Saving them into a dataframe
+indx <- sapply(df, is.factor) 
+df[indx] <- lapply(df[indx], function(x) as.character(x)) # Factor --> char conversion
+
+df[1:posNum,]$Value <- 1 # We have the value of the positive sequences to positive
+
+table(df$Value)
+
+
+output <- c("Value")
+set.seed(1234)
+
+partition <- createDataPartition(df[[output]],
+                                     p = 0.8,
+                                     list = FALSE,
+                                     times = 1)
+trains <- df[partition,]
+tests <- df[-partition,]
+
+
+train.x <- data.matrix(trains[,1:1000])
+train.y <- data.matrix(trains[,1001])
+  
+test.x <- data.matrix(tests[,1:1000])
+test.y <- data.matrix(tests[,1001])
+
+train.x <- array_reshape(train.x, c(nrow(trains),1000,1))
+test.x <- array_reshape(test.x, c(nrow(tests),1000,1))
+ 
+```
+
+```{r}
+  batch_size <- 125
+  epochs <- 8 
+  input_shape <- c(1000,1)
+  learn_rate = 0.0001
+  
+  modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+    layer_conv_1d(filters = 12, kernel_size = 101, activation = "relu", input_shape = input_shape)%>%
+    layer_flatten() %>%
+    layer_dense(units = 18, activation = 'relu') %>% 
+    layer_dense(units = 1, activation="sigmoid") %>%
+    
+    summary(model)
+  
+  modelConvolu %>% compile(
+    loss = loss_binary_crossentropy,
+    optimizer = optimizer_nadam(lr = learn_rate),
+    metrics = c('accuracy')
+  )
+
+  
+config = tensorflow::tf$ConfigProto(gpu_options = list(allow_growth = TRUE))
+sess = tensorflow::tf$Session(config = config)
+keras::k_set_session(session = sess)
+
+
+
+  
+sens <- NULL
+spec <- NULL
+history <- NULL
+ 
+  
+modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+    layer_conv_1d(filters = 12, kernel_size = 101, activation = "relu", input_shape = input_shape)%>%
+    layer_flatten() %>%
+    layer_dense(units = 18, activation = 'relu') %>% 
+    layer_dense(units = 1, activation="sigmoid") 
+  
+  modelConvolu %>% compile(
+    loss = loss_binary_crossentropy,
+    optimizer = optimizer_nadam(lr = learn_rate),
+    metrics = c('accuracy')
+  )
+  
+    for (epoch in 1:epochs){
+    historial <- modelConvolu %>% fit(
+      x = train.x,
+      y = train.y,
+      epochs = 1,  
+      batch_size = batch_size, 
+      validation_data = list(test.x, test.y),
+      verbose = 2)
+    
+    history <- c(history, historial)
+  }
+
+
+  
+lrp <- function(model, dataframe, indexSeq){
+  print(paste0("Sequence number ",indexSeq))
+  layers <- model$layers
+  input <- as.matrix(as.numeric(dataframe[indexSeq,1:1000])) # posNum+10
+  
+  ## STEP 1: CREATE DATA STRUCTURES
+  activs <- list()
+  weights <- list()
+  biases <- list()
+
+  for (i in 1:length(layers)){
+    lay <- layers[[i]]
+    layer_name <- lay$name
+    
+    intermediate_layer_model <- keras_model(inputs = model$input,
+                                      outputs = get_layer(model, layer_name)$output)
+    intermediate_output <- predict(intermediate_layer_model, array_reshape(input, c(1,1000,1)))
+    
+    if (length(lay$weights) > 0){ # If not a flatten layer
+      activs[[i]] <- intermediate_output
+      weights[[i]] <- lay$get_weights()[[1]]
+      biases[[i]] <- lay$get_weights()[[2]]
+    }
+  }
+  
+  ## STEP 2: OUTPUT LAYER
+  
+  Rk <- list()
+  Rk[["output"]] <- as.numeric(activs[[length(layers)]])
+  print(Rk[["output"]])
+  
+  ## STEP 3: DENSE LAYER
+  
+  pos_weights <- weights[[4]]
+  for (i in 1:length(weights[[4]]))
+    pos_weights[i] <- max(weights[[4]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  denom = 0
+  
+  for (i in 1:length(activs[[3]])) { # Calculating the denominator
+    value <- activs[[3]][i] * pos_weights[i]
+    denom <- denom + value
+  }
+  
+  for (i in 1:length(activs[[3]])) { # Calculating each numerator and, with it, the relevance of each neuron of the dense layer
+    numer <- activs[[3]][i] * pos_weights[i]
+    if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+    Rk[["dense"]][i] <- division * Rk[["output"]][1]
+  }
+  
+  ## STEP 4: CONVOLUTIONAL LAYER
+  
+  pos_weights <- weights[[3]]
+  for (i in 1:length(weights[[3]]))
+    pos_weights[i] <- max(weights[[3]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  for (i in 1:length(activs[[1]]))
+    Rk[["conv"]][i] = 0
+  
+  for (k in 1:length(Rk[["dense"]])) { # For each neuron in the layer analyzed before we have to repeat the main cycle
+    denom <- 0
+    
+    # pos_weights[j,k]
+  #  individual_weights = length(pos_weights) / length(Rk[["dense"]])
+    
+    for (j in 1:length(activs[[1]])) { # For each neuron in the actual layer, calculate denominator
+      value <- activs[[1]][j] * pos_weights[j,k]
+      denom <- denom + value
+    }
+    
+    for (j in 1:length(activs[[1]])) {# For each neuron in the actual layer, calculate numerator and relevance j<-k
+      numer <- activs[[1]][j] * pos_weights[j,k]
+      if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+      Rk[["conv"]][j] <- Rk[["conv"]][j] + (division * Rk[["dense"]][k])
+    }
+  }
+  
+  ## STEP 5: INPUT LAYER
+  
+  pos_weights <- weights[[1]]
+
+  for (i in 1:length(weights[[1]]))
+    pos_weights[i] <- max(weights[[1]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  
+  used <- list()
+  for (i in 1:1000){
+    Rk[["input"]][i] = 0
+    used[["input"]][i] = 0
+  }
+  
+  for (k in 1:length(activs[[1]])){ # For each one of the convolution cells
+  #  if (Rk[["conv"]][k] == 0)
+   #   next
+    ## First we have to obtain the list of input nodes that contribute to this value. We know that there are as many nodes as the size of the filters:
+    num_neurons <- length(weights[[1]][,,1])
+    
+    ## Now we have to know which are these neurons. For that reason, we have to obtain the position of this cell relative to the convolution filter
+    # Since a%%b returns a value in [0,b-1] and we want a value in [1,b], we have to do it this way:
+    cells_per_kernel <- length(activs[[1]][,,1])
+    k_relative <- ((k-1)%%cells_per_kernel)+1
+    # And now we obtain the list of input values that affected this particular cell
+    j_neurons <- k_relative:(k_relative + num_neurons - 1)
+    
+    ## To obtain the weights, we have to know to which kernel this cell belongs to
+    kernel <- ceiling(k/cells_per_kernel)
+    
+    ## And now we can obtain said weights
+    kernel_weights <- pos_weights[,,kernel]
+    
+    ## Now we can calculate the denominator for this filter, following the formula
+    denom <- sum(input[j_neurons] * kernel_weights)
+    
+    ## And, for each j neuron, we calculate its numerator, and add its value to its relevance
+    for (j in 1:length(j_neurons)){
+      numer <- input[j_neurons[j]] * kernel_weights[j] * Rk[["conv"]][k]
+      if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+      Rk[["input"]][j_neurons[j]] = Rk[["input"]][j_neurons[j]] + division
+      used[["input"]][j_neurons[j]] = used[["input"]][j_neurons[j]] + 1
+    }
+  }
+  
+  ## STEP 6: RETURNING RESULT
+  
+ return(Rk[["input"]] / used[["input"]])
+#return(Rk[["input"]])
+    
+}
+
+lrp_nonorm <- function(model, dataframe, indexSeq){
+  print(paste0("Sequence number ",indexSeq))
+  layers <- model$layers
+  input <- as.matrix(as.numeric(dataframe[indexSeq,1:1000])) # posNum+10
+  
+  ## STEP 1: CREATE DATA STRUCTURES
+  activs <- list()
+  weights <- list()
+  biases <- list()
+
+  for (i in 1:length(layers)){
+    lay <- layers[[i]]
+    layer_name <- lay$name
+    
+    intermediate_layer_model <- keras_model(inputs = model$input,
+                                      outputs = get_layer(model, layer_name)$output)
+    intermediate_output <- predict(intermediate_layer_model, array_reshape(input, c(1,1000,1)))
+    
+    if (length(lay$weights) > 0){ # If not a flatten layer
+      activs[[i]] <- intermediate_output
+      weights[[i]] <- lay$get_weights()[[1]]
+      biases[[i]] <- lay$get_weights()[[2]]
+    }
+  }
+  
+  ## STEP 2: OUTPUT LAYER
+  
+  Rk <- list()
+  Rk[["output"]] <- as.numeric(activs[[length(layers)]])
+  print(Rk[["output"]])
+  
+  ## STEP 3: DENSE LAYER
+  
+  pos_weights <- weights[[4]]
+  for (i in 1:length(weights[[4]]))
+    pos_weights[i] <- max(weights[[4]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  denom = 0
+  
+  for (i in 1:length(activs[[3]])) { # Calculating the denominator
+    value <- activs[[3]][i] * pos_weights[i]
+    denom <- denom + value
+  }
+  
+  for (i in 1:length(activs[[3]])) { # Calculating each numerator and, with it, the relevance of each neuron of the dense layer
+    numer <- activs[[3]][i] * pos_weights[i]
+    if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+    Rk[["dense"]][i] <- division * Rk[["output"]][1]
+  }
+  
+  ## STEP 4: CONVOLUTIONAL LAYER
+  
+  pos_weights <- weights[[3]]
+  for (i in 1:length(weights[[3]]))
+    pos_weights[i] <- max(weights[[3]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  for (i in 1:length(activs[[1]]))
+    Rk[["conv"]][i] = 0
+  
+  for (k in 1:length(Rk[["dense"]])) { # For each neuron in the layer analyzed before we have to repeat the main cycle
+    denom <- 0
+    
+    # pos_weights[j,k]
+  #  individual_weights = length(pos_weights) / length(Rk[["dense"]])
+    
+    for (j in 1:length(activs[[1]])) { # For each neuron in the actual layer, calculate denominator
+      value <- activs[[1]][j] * pos_weights[j,k]
+      denom <- denom + value
+    }
+    
+    for (j in 1:length(activs[[1]])) {# For each neuron in the actual layer, calculate numerator and relevance j<-k
+      numer <- activs[[1]][j] * pos_weights[j,k]
+      if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+      Rk[["conv"]][j] <- Rk[["conv"]][j] + (division * Rk[["dense"]][k])
+    }
+  }
+  
+  ## STEP 5: INPUT LAYER
+  
+  pos_weights <- weights[[1]]
+
+  for (i in 1:length(weights[[1]]))
+    pos_weights[i] <- max(weights[[1]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  
+  used <- list()
+  for (i in 1:1000){
+    Rk[["input"]][i] = 0
+    used[["input"]][i] = 0
+  }
+  
+  for (k in 1:length(activs[[1]])){ # For each one of the convolution cells
+  #  if (Rk[["conv"]][k] == 0)
+   #   next
+    ## First we have to obtain the list of input nodes that contribute to this value. We know that there are as many nodes as the size of the filters:
+    num_neurons <- length(weights[[1]][,,1])
+    
+    ## Now we have to know which are these neurons. For that reason, we have to obtain the position of this cell relative to the convolution filter
+    # Since a%%b returns a value in [0,b-1] and we want a value in [1,b], we have to do it this way:
+    cells_per_kernel <- length(activs[[1]][,,1])
+    k_relative <- ((k-1)%%cells_per_kernel)+1
+    # And now we obtain the list of input values that affected this particular cell
+    j_neurons <- k_relative:(k_relative + num_neurons - 1)
+    
+    ## To obtain the weights, we have to know to which kernel this cell belongs to
+    kernel <- ceiling(k/cells_per_kernel)
+    
+    ## And now we can obtain said weights
+    kernel_weights <- pos_weights[,,kernel]
+    
+    ## Now we can calculate the denominator for this filter, following the formula
+    denom <- sum(input[j_neurons] * kernel_weights)
+    
+    ## And, for each j neuron, we calculate its numerator, and add its value to its relevance
+    for (j in 1:length(j_neurons)){
+      numer <- input[j_neurons[j]] * kernel_weights[j] * Rk[["conv"]][k]
+      if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+      Rk[["input"]][j_neurons[j]] = Rk[["input"]][j_neurons[j]] + division
+      used[["input"]][j_neurons[j]] = used[["input"]][j_neurons[j]] + 1
+    }
+  }
+  
+  ## STEP 6: RETURNING RESULT
+  
+ return(Rk)
+#return(Rk[["input"]])
+    
+}
+```
+
+We obtain the relevance to each case, and then we add them.
+
+```{r}
+# Relevances of 1000, normalized
+
+posCases <- which(df$Value == 1)
+negCases <- which(df$Value == 0)
+
+allRelevances <- list()
+allRelevances[["pos"]] <- list()
+allRelevances[["neg"]] <- list()
+
+
+for (i in posCases[730:750]){
+  allRelevances[["pos"]] <- append(allRelevances[["pos"]], list(lrp(modelConvolu, df, i)))
+}
+
+for (i in negCases[780:800]){
+  allRelevances[["neg"]] <- append(allRelevances[["neg"]], list(lrp(modelConvolu, df, i)))
+}
+
+relneg <- unlist(allRelevances[["neg"]][1])
+for (i in 2:20){
+  relneg <- relneg + unlist(allRelevances[["neg"]][i])
+}
+plot(relneg,type="l")
+
+relpos <- unlist(allRelevances[["pos"]][1])
+for (i in 2:20){
+  relpos <- relpos + unlist(allRelevances[["pos"]][i])
+}
+plot(relpos,type="l")
+
+
+```
+```{r}
+# Relevances of 1000, not normalized
+
+allRelevances <- list()
+allRelevances[["pos"]] <- list()
+allRelevances[["neg"]] <- list()
+
+
+for (i in posCases[1:20]){
+  allRelevances[["pos"]] <- append(allRelevances[["pos"]], list(lrp_nonorm(modelConvolu, df, i)[["input"]]))
+}
+
+for (i in negCases[1:20]){
+  allRelevances[["neg"]] <- append(allRelevances[["neg"]], list(lrp_nonorm(modelConvolu, df, i)[["input"]]))
+}
+
+relneg_nn <- unlist(allRelevances[["neg"]][1])
+for (i in 2:20){
+  relneg_nn <- relneg_nn + unlist(allRelevances[["neg"]][i])
+}
+plot(relneg,type="l")
+
+relpos_nn <- unlist(allRelevances[["pos"]][1])
+for (i in 2:20){
+  relpos_nn <- relpos_nn + unlist(allRelevances[["pos"]][i])
+}
+plot(relpos,type="l")
+
+
+```
+
+# Repetir experimento sin los últimos 200
+
+
+## Obtaining the sequences
+
+We will create some simple sequences, very easy to differentiate. They will consist of 200 random characters (only T, C and G) and 50 Cs, either at the start of the sequence (positive), or at the end (negative). This way, we will have some easy to differentiate sequences, and we will be able to check if our LRP works as intended.
+
+```{r}
+
+PositiveSequences1 <- stri_rand_strings(500, 100, pattern = "[TGA]")
+PositiveSequences2 <- stri_rand_strings(500, 100, pattern = "[TGA]")
+NegativeSequences1 <- stri_rand_strings(500, 100, pattern = "[TGA]")
+NegativeSequences2 <- stri_rand_strings(500, 100, pattern = "[TGA]")
+
+PositiveSequences3 <- stri_rand_strings(250, 175, pattern = "[TGA]")
+NegativeSequences3 <- stri_rand_strings(250, 175, pattern = "[TGA]")
+
+Cseq <- paste(rep("C",50), collapse="")
+Tseq <- paste(rep("T",50), collapse="")
+miniGset <- paste(rep("G",25), collapse="")
+miniCset <- paste(rep("C",25), collapse="")
+
+PositiveSequences <- paste0(PositiveSequences1,PositiveSequences2,Cseq)
+NegativeSequences <- paste0(NegativeSequences1,NegativeSequences2, Tseq)
+
+PositiveSequencesB <- paste0(PositiveSequences3, miniGset, Cseq)
+NegativeSequencesB <- paste0(NegativeSequences3, miniCset, Tseq)
+
+PositiveSequences <- c(PositiveSequences, PositiveSequencesB)
+NegativeSequences <- c(NegativeSequences, NegativeSequencesB)
+
+```
+
+## Treating the sequences
+
+```{r}
+# to_onehot:   TGCCAA --> 00010010010010001000    (A = 1000, C = 0100, G = 0010, T = 0001)
+PosSequences <- simple_onehot(PositiveSequences)
+NegSequences <- simple_onehot(NegativeSequences)
+
+
+# Validation
+test1 = all(sapply(list(min(nchar(PosSequences)),max(nchar(PosSequences)), mean(nchar(PosSequences))), function(x) x == 1000))
+test2 = all(sapply(list(min(nchar(NegSequences)),max(nchar(NegSequences)), mean(nchar(NegSequences))), function(x) x == 1000))
+if (test1) print ("Correct 1") else print ("ERROR 1")
+if (test2) print ("Correct 2") else print ("ERROR 2")
+
+# Final check: Since some of the sequences might be corrupt, we will delete the ones that are corrupt, if they exist
+# We can know if a sequence is corrupt by looking for the W character. When one-hot encoding, we encoded everything that was not an A, T, C or G with a "W"
+
+if (any(grepl("W",PosSequences))){
+  print("Found 'W'")
+  PosSequences <- PosSequences[-which(grepl("W",PosSequences)),]
+}
+  
+if (any(grepl("W",NegSequences))){
+  print("Found 'W'")
+  NegSequences <- NegSequences[-which(grepl("W",NegSequences)),]
+}
+```
+
+## Training the network
+
+
+```{r}
+posNum <- length(PosSequences) # Number of positive sequences
+SeqUTR <- append(PosSequences,NegSequences)
+
+old_seq = SeqUTR[1] # For validation tests
+
+n2 <- nchar(SeqUTR[1]) -1 # Number of divisions to make
+
+secuenciasOH <- sapply(1 + 1*0:n2, function(z) substr(SeqUTR, z, z))  # Obtaining the split characters
+df <- data.frame(secuenciasOH, "Value" = 0) # Saving them into a dataframe
+indx <- sapply(df, is.factor) 
+df[indx] <- lapply(df[indx], function(x) as.character(x)) # Factor --> char conversion
+
+df[1:posNum,]$Value <- 1 # We have the value of the positive sequences to positive
+
+table(df$Value)
+
+
+output <- c("Value")
+set.seed(1234)
+
+partition <- createDataPartition(df[[output]],
+                                     p = 0.8,
+                                     list = FALSE,
+                                     times = 1)
+trains <- df[partition,]
+tests <- df[-partition,]
+
+
+train.x <- data.matrix(trains[,1:1000])
+train.y <- data.matrix(trains[,1001])
+  
+test.x <- data.matrix(tests[,1:1000])
+test.y <- data.matrix(tests[,1001])
+
+train.x <- array_reshape(train.x, c(nrow(trains),1000,1))
+test.x <- array_reshape(test.x, c(nrow(tests),1000,1))
+ 
+```
+
+```{r}
+  batch_size <- 125
+  epochs <- 8 
+  input_shape <- c(1000,1)
+  learn_rate = 0.0001
+  
+  modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+    layer_conv_1d(filters = 12, kernel_size = 101, activation = "relu", input_shape = input_shape)%>%
+    layer_flatten() %>%
+    layer_dense(units = 18, activation = 'relu') %>% 
+    layer_dense(units = 1, activation="sigmoid") %>%
+    
+    summary(model)
+  
+  modelConvolu %>% compile(
+    loss = loss_binary_crossentropy,
+    optimizer = optimizer_nadam(lr = learn_rate),
+    metrics = c('accuracy')
+  )
+
+  
+config = tensorflow::tf$ConfigProto(gpu_options = list(allow_growth = TRUE))
+sess = tensorflow::tf$Session(config = config)
+keras::k_set_session(session = sess)
+
+
+
+  
+sens <- NULL
+spec <- NULL
+history <- NULL
+ 
+  
+modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+    layer_conv_1d(filters = 12, kernel_size = 101, activation = "relu", input_shape = input_shape)%>%
+    layer_flatten() %>%
+    layer_dense(units = 18, activation = 'relu') %>% 
+    layer_dense(units = 1, activation="sigmoid") 
+  
+  modelConvolu %>% compile(
+    loss = loss_binary_crossentropy,
+    optimizer = optimizer_nadam(lr = learn_rate),
+    metrics = c('accuracy')
+  )
+  
+    for (epoch in 1:epochs){
+    historial <- modelConvolu %>% fit(
+      x = train.x,
+      y = train.y,
+      epochs = 1,  
+      batch_size = batch_size, 
+      validation_data = list(test.x, test.y),
+      verbose = 2)
+    
+    history <- c(history, historial)
+  }
+
+
+  
+lrp <- function(model, dataframe, indexSeq){
+  print(paste0("Sequence number ",indexSeq))
+  layers <- model$layers
+  input <- as.matrix(as.numeric(dataframe[indexSeq,1:1000])) # posNum+10
+  
+  ## STEP 1: CREATE DATA STRUCTURES
+  activs <- list()
+  weights <- list()
+  biases <- list()
+
+  for (i in 1:length(layers)){
+    lay <- layers[[i]]
+    layer_name <- lay$name
+    
+    intermediate_layer_model <- keras_model(inputs = model$input,
+                                      outputs = get_layer(model, layer_name)$output)
+    intermediate_output <- predict(intermediate_layer_model, array_reshape(input, c(1,1000,1)))
+    
+    if (length(lay$weights) > 0){ # If not a flatten layer
+      activs[[i]] <- intermediate_output
+      weights[[i]] <- lay$get_weights()[[1]]
+      biases[[i]] <- lay$get_weights()[[2]]
+    }
+  }
+  
+  ## STEP 2: OUTPUT LAYER
+  
+  Rk <- list()
+  Rk[["output"]] <- as.numeric(activs[[length(layers)]])
+  print(Rk[["output"]])
+  
+  ## STEP 3: DENSE LAYER
+  
+  pos_weights <- weights[[4]]
+  for (i in 1:length(weights[[4]]))
+    pos_weights[i] <- max(weights[[4]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  denom = 0
+  
+  for (i in 1:length(activs[[3]])) { # Calculating the denominator
+    value <- activs[[3]][i] * pos_weights[i]
+    denom <- denom + value
+  }
+  
+  for (i in 1:length(activs[[3]])) { # Calculating each numerator and, with it, the relevance of each neuron of the dense layer
+    numer <- activs[[3]][i] * pos_weights[i]
+    if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+    Rk[["dense"]][i] <- division * Rk[["output"]][1]
+  }
+  
+  ## STEP 4: CONVOLUTIONAL LAYER
+  
+  pos_weights <- weights[[3]]
+  for (i in 1:length(weights[[3]]))
+    pos_weights[i] <- max(weights[[3]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  for (i in 1:length(activs[[1]]))
+    Rk[["conv"]][i] = 0
+  
+  for (k in 1:length(Rk[["dense"]])) { # For each neuron in the layer analyzed before we have to repeat the main cycle
+    denom <- 0
+    
+    # pos_weights[j,k]
+  #  individual_weights = length(pos_weights) / length(Rk[["dense"]])
+    
+    for (j in 1:length(activs[[1]])) { # For each neuron in the actual layer, calculate denominator
+      value <- activs[[1]][j] * pos_weights[j,k]
+      denom <- denom + value
+    }
+    
+    for (j in 1:length(activs[[1]])) {# For each neuron in the actual layer, calculate numerator and relevance j<-k
+      numer <- activs[[1]][j] * pos_weights[j,k]
+      if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+      Rk[["conv"]][j] <- Rk[["conv"]][j] + (division * Rk[["dense"]][k])
+    }
+  }
+  
+  ## STEP 5: INPUT LAYER
+  
+  pos_weights <- weights[[1]]
+
+  for (i in 1:length(weights[[1]]))
+    pos_weights[i] <- max(weights[[1]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  
+  used <- list()
+  for (i in 1:1000){
+    Rk[["input"]][i] = 0
+    used[["input"]][i] = 0
+  }
+  
+  for (k in 1:length(activs[[1]])){ # For each one of the convolution cells
+  #  if (Rk[["conv"]][k] == 0)
+   #   next
+    ## First we have to obtain the list of input nodes that contribute to this value. We know that there are as many nodes as the size of the filters:
+    num_neurons <- length(weights[[1]][,,1])
+    
+    ## Now we have to know which are these neurons. For that reason, we have to obtain the position of this cell relative to the convolution filter
+    # Since a%%b returns a value in [0,b-1] and we want a value in [1,b], we have to do it this way:
+    cells_per_kernel <- length(activs[[1]][,,1])
+    k_relative <- ((k-1)%%cells_per_kernel)+1
+    # And now we obtain the list of input values that affected this particular cell
+    j_neurons <- k_relative:(k_relative + num_neurons - 1)
+    
+    ## To obtain the weights, we have to know to which kernel this cell belongs to
+    kernel <- ceiling(k/cells_per_kernel)
+    
+    ## And now we can obtain said weights
+    kernel_weights <- pos_weights[,,kernel]
+    
+    ## Now we can calculate the denominator for this filter, following the formula
+    denom <- sum(input[j_neurons] * kernel_weights)
+    
+    ## And, for each j neuron, we calculate its numerator, and add its value to its relevance
+    for (j in 1:length(j_neurons)){
+      numer <- input[j_neurons[j]] * kernel_weights[j] * Rk[["conv"]][k]
+      if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+      Rk[["input"]][j_neurons[j]] = Rk[["input"]][j_neurons[j]] + division
+      used[["input"]][j_neurons[j]] = used[["input"]][j_neurons[j]] + 1
+    }
+  }
+  
+  ## STEP 6: RETURNING RESULT
+  
+ return(Rk[["input"]] / used[["input"]])
+#return(Rk[["input"]])
+    
+}
+
+lrp_nonorm <- function(model, dataframe, indexSeq){
+  print(paste0("Sequence number ",indexSeq))
+  layers <- model$layers
+  input <- as.matrix(as.numeric(dataframe[indexSeq,1:1000])) # posNum+10
+  
+  ## STEP 1: CREATE DATA STRUCTURES
+  activs <- list()
+  weights <- list()
+  biases <- list()
+
+  for (i in 1:length(layers)){
+    lay <- layers[[i]]
+    layer_name <- lay$name
+    
+    intermediate_layer_model <- keras_model(inputs = model$input,
+                                      outputs = get_layer(model, layer_name)$output)
+    intermediate_output <- predict(intermediate_layer_model, array_reshape(input, c(1,1000,1)))
+    
+    if (length(lay$weights) > 0){ # If not a flatten layer
+      activs[[i]] <- intermediate_output
+      weights[[i]] <- lay$get_weights()[[1]]
+      biases[[i]] <- lay$get_weights()[[2]]
+    }
+  }
+  
+  ## STEP 2: OUTPUT LAYER
+  
+  Rk <- list()
+  Rk[["output"]] <- as.numeric(activs[[length(layers)]])
+  print(Rk[["output"]])
+  
+  ## STEP 3: DENSE LAYER
+  
+  pos_weights <- weights[[4]]
+  for (i in 1:length(weights[[4]]))
+    pos_weights[i] <- max(weights[[4]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  denom = 0
+  
+  for (i in 1:length(activs[[3]])) { # Calculating the denominator
+    value <- activs[[3]][i] * pos_weights[i]
+    denom <- denom + value
+  }
+  
+  for (i in 1:length(activs[[3]])) { # Calculating each numerator and, with it, the relevance of each neuron of the dense layer
+    numer <- activs[[3]][i] * pos_weights[i]
+    if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+    Rk[["dense"]][i] <- division * Rk[["output"]][1]
+  }
+  
+  ## STEP 4: CONVOLUTIONAL LAYER
+  
+  pos_weights <- weights[[3]]
+  for (i in 1:length(weights[[3]]))
+    pos_weights[i] <- max(weights[[3]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  for (i in 1:length(activs[[1]]))
+    Rk[["conv"]][i] = 0
+  
+  for (k in 1:length(Rk[["dense"]])) { # For each neuron in the layer analyzed before we have to repeat the main cycle
+    denom <- 0
+    
+    # pos_weights[j,k]
+  #  individual_weights = length(pos_weights) / length(Rk[["dense"]])
+    
+    for (j in 1:length(activs[[1]])) { # For each neuron in the actual layer, calculate denominator
+      value <- activs[[1]][j] * pos_weights[j,k]
+      denom <- denom + value
+    }
+    
+    for (j in 1:length(activs[[1]])) {# For each neuron in the actual layer, calculate numerator and relevance j<-k
+      numer <- activs[[1]][j] * pos_weights[j,k]
+      if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+      Rk[["conv"]][j] <- Rk[["conv"]][j] + (division * Rk[["dense"]][k])
+    }
+  }
+  
+  ## STEP 5: INPUT LAYER
+  
+  pos_weights <- weights[[1]]
+
+  for (i in 1:length(weights[[1]]))
+    pos_weights[i] <- max(weights[[1]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+##  if (min(pos_weights) == 0) print("CORRECT 1") else print ("ERROR 1")
+  
+  
+  used <- list()
+  for (i in 1:1000){
+    Rk[["input"]][i] = 0
+    used[["input"]][i] = 0
+  }
+  
+  for (k in 1:length(activs[[1]])){ # For each one of the convolution cells
+  #  if (Rk[["conv"]][k] == 0)
+   #   next
+    ## First we have to obtain the list of input nodes that contribute to this value. We know that there are as many nodes as the size of the filters:
+    num_neurons <- length(weights[[1]][,,1])
+    
+    ## Now we have to know which are these neurons. For that reason, we have to obtain the position of this cell relative to the convolution filter
+    # Since a%%b returns a value in [0,b-1] and we want a value in [1,b], we have to do it this way:
+    cells_per_kernel <- length(activs[[1]][,,1])
+    k_relative <- ((k-1)%%cells_per_kernel)+1
+    # And now we obtain the list of input values that affected this particular cell
+    j_neurons <- k_relative:(k_relative + num_neurons - 1)
+    
+    ## To obtain the weights, we have to know to which kernel this cell belongs to
+    kernel <- ceiling(k/cells_per_kernel)
+    
+    ## And now we can obtain said weights
+    kernel_weights <- pos_weights[,,kernel]
+    
+    ## Now we can calculate the denominator for this filter, following the formula
+    denom <- sum(input[j_neurons] * kernel_weights)
+    
+    ## And, for each j neuron, we calculate its numerator, and add its value to its relevance
+    for (j in 1:length(j_neurons)){
+      numer <- input[j_neurons[j]] * kernel_weights[j] * Rk[["conv"]][k]
+      if (denom != 0) {
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+      Rk[["input"]][j_neurons[j]] = Rk[["input"]][j_neurons[j]] + division
+      used[["input"]][j_neurons[j]] = used[["input"]][j_neurons[j]] + 1
+    }
+  }
+  
+  ## STEP 6: RETURNING RESULT
+  
+ return(Rk)
+#return(Rk[["input"]])
+    
+}
+```

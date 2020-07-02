@@ -1,0 +1,1166 @@
+---
+title: "Training the network of the UTR experiment"
+author: "Jaime Martínez Legaz"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    pdf_document: default
+    toc_depth: 3
+    number_sections: true
+    theme: lumen
+---
+
+
+```{r, eval=FALSE, echo=FALSE}
+library(tensorflow)
+
+with(tf$device("/gpu:0"), {
+
+})
+
+```
+
+```{r, include=FALSE}
+library(biomaRt)
+library(SetupSequences)
+library(keras)
+library(caret)
+library(tidyverse)
+library(BSgenome)
+library(BSgenome.Hsapiens.UCSC.hg38.masked)
+library(GenomicRanges)
+```
+
+# Obtaining the sequences
+
+We have to obtain the sequences we will work with. This is the code that will achieve that.
+
+```{r}
+ml_table = readRDS(file = "../../Data/ml_data_rf.rds") %>% 
+  dplyr::select(class) %>% 
+  rownames_to_column("id") %>% 
+  tidyr::separate(id, c("gene", "seqnames", "start", "end", "strand", "tmp"), sep=":", remove=FALSE)
+  
+
+# converting to Granges object
+ml_table_gr = makeGRangesFromDataFrame(ml_table, keep.extra.columns = TRUE)
+
+# adding "chr" in front of seqnames
+newStyle <- mapSeqlevels(seqlevels(ml_table_gr), "UCSC")
+ml_table_gr <- renameSeqlevels(ml_table_gr, newStyle)
+
+# Extract sequences using the package BSgenome
+data = data.frame(
+  id = ml_table$id,
+  class = ml_table$class,
+  sequence = BSgenome::getSeq(Hsapiens, ml_table_gr, as.character = TRUE) #as.character=TRUE does not work?
+)
+data$sequence <- as.character(data$sequence)
+table(data$class)
+```
+
+Next step is grouping all the non 3'UTR sequences into a group, so that we can compare 3'UTR sequences with non 3'UTR sequences regardless of the subtype.
+
+```{r}
+old_data <- data # Needed for the valdation tests
+
+data <- data[data$class == "ICE" | data$class == "UTR",]
+data$detailclass = data$class
+data$class = ifelse(data$class %in% "UTR", "UTR", "Non_3_UTR")  %>% as.factor() %>% as.integer()
+data$class <- data$class - 1 #0 = No3UTR 1 = 3UTR
+table(data$class)
+```
+
+```{r}
+# Validation test
+test1 = table(data$class)["0"] == nrow(data) - table(old_data$class)["UTR"]; if (test1 == FALSE) print ("ERROR 1")
+test2 = table(data$class)["1"] == table(old_data$class)["UTR"]; if (test2 == FALSE) print ("ERROR 2")
+
+```
+
+We will separate these sequences into the "Positive" group (3'UTR) and the "Negative" group (non-3'UTR).
+
+```{r}
+PositiveSequences = data[data$class == 1,]
+NegativeSequences = data[data$class == 0,]
+```
+
+And save these sequences to a file.
+
+```{r}
+write.csv(PositiveSequences,file="../../Data/PositiveUTRSequences_untreated_sid", row.names = FALSE, quote = FALSE)
+write.csv(NegativeSequences,file="../../Data/NegativeUTRSequences_untreated_sid", row.names = FALSE, quote = FALSE)
+```
+
+
+## Treating the sequences
+
+First, we recover the sequences we obtained with ensembl.
+
+```{r}
+PosSequences <- PositiveSequences[nchar(PositiveSequences$sequence) >= 202,]
+NegSequences <- NegativeSequences[nchar(NegativeSequences$sequence) >= 202,]
+```
+
+Next we start with the treatment of sequences. We have to:
+
+- Reverse them
+- Make sure all sequences are 250 characters long
+- One-hot encode them
+
+For that, we need some functions from the custom package developed for this project.
+
+```{r}
+# We save the sequences for later use
+PosSequences$rawseq <- PosSequences$sequence
+NegSequences$rawseq <- NegSequences$sequence
+
+# Example of sequence: AACCGT
+PosSequences$sequence[1]  # Example of a positive sequence
+NegSequences$sequence[1]  # Example of a negative sequence
+```
+
+
+```{r}
+old_seq = PosSequences$sequence[1]
+
+# strReverse:  AACCGT --> TGCCAA
+PosSequences$sequence <- strReverse(PosSequences$sequence)
+NegSequences$sequence <- strReverse(NegSequences$sequence)
+
+PosSequences$sequence[1]  # The positive sequence, once reversed
+NegSequences$sequence[1]  # The negative sequence, once reversed
+
+# Validation
+doublereverse = strReverse(PosSequences$sequence[1])
+test1 = doublereverse == old_seq; if (test1 == FALSE) print ("ERROR 1")
+```
+
+```{r}
+# padding_sequences: Inserts padding characters ("X") in sequences shorter than 250 characters, and trims sequences longer than 202 characters
+PosSequences$sequence <- padding_sequences(PosSequences$sequence, length=202) # Check the Study_Length_Padding markdown to know why 202 length
+NegSequences$sequence <- padding_sequences(NegSequences$sequence, length=202)
+
+PosSequences$sequence[1]  # The positive sequence, with some characters added so it can be 202 characters long
+NegSequences$sequence[1]  # The negative sequence, trimmed so it becomes 202 characters long
+
+# Validation
+test1 = all(sapply(list(min(nchar(PosSequences$sequence)),max(nchar(PosSequences$sequence)), mean(nchar(PosSequences$sequence))), function(x) x == 202))
+test2 = all(sapply(list(min(nchar(NegSequences$sequence)),max(nchar(NegSequences$sequence)), mean(nchar(NegSequences$sequence))), function(x) x == 202))
+if (test1 == FALSE) print ("ERROR 1")
+if (test2 == FALSE) print ("ERROR 2")
+```
+
+```{r}
+# Final check: Since some of the sequences might be corrupt, we will delete the ones that are corrupt, if they exist
+# We can know if a sequence is corrupt by looking for the W character. When one-hot encoding, we encoded everything that was not an A, T, C or G with a "W"
+
+if (any(grepl("X",PosSequences$sequence))){
+  print("Found 'X'")
+  PosSequences <- PosSequences[-which(grepl("X",PosSequences$sequence)),]
+}
+  
+if (any(grepl("X",NegSequences$sequence))){
+  print("Found 'X'")
+  NegSequences <- NegSequences[-which(grepl("X",NegSequences$sequence)),]
+}
+```
+
+```{r}
+# to_onehot:   TGCCAA --> 00010010010010001000    (A = 1000, C = 0100, G = 0010, T = 0001)
+PosSequences$sequence <- simple_onehot(PosSequences$sequence)
+NegSequences$sequence <- simple_onehot(NegSequences$sequence)
+
+PosSequences$sequence[1]  # The positive sequence, reversed, padded and one-hot encoded
+NegSequences$sequence[1]  # The negative sequence, reversed, trimmed and one-hot encoded
+
+# Validation
+test1 = all(sapply(list(min(nchar(PosSequences$sequence)),max(nchar(PosSequences$sequence)), mean(nchar(PosSequences$sequence))), function(x) x == 808))
+test2 = all(sapply(list(min(nchar(NegSequences$sequence)),max(nchar(NegSequences$sequence)), mean(nchar(NegSequences$sequence))), function(x) x == 808))
+if (test1 == FALSE) print ("ERROR 1")
+if (test2 == FALSE) print ("ERROR 2")
+```
+
+```{r}
+# Final check: Since some of the sequences might be corrupt, we will delete the ones that are corrupt, if they exist
+# We can know if a sequence is corrupt by looking for the W character. When one-hot encoding, we encoded everything that was not an A, T, C or G with a "W"
+
+if (any(grepl("W",PosSequences$sequence))){
+  print("Found 'W'")
+  PosSequences <- PosSequences[-which(grepl("W",PosSequences$sequence)),]
+}
+  
+if (any(grepl("W",NegSequences$sequence))){
+  print("Found 'W'")
+  NegSequences <- NegSequences[-which(grepl("W",NegSequences$sequence)),]
+}
+```
+
+Once treated, we can save them in a file for later use. 
+
+
+```{r}
+fileCon<-file("../../Data/Pos3UTR")
+write.table(PosSequences$sequence,file = fileCon, quote=FALSE, row.names = FALSE, col.names = FALSE)
+fileCon<-file("../../Data/Neg3UTR")
+write.table(NegSequences$sequence,file = fileCon, quote=FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+## Training the network
+
+First we have to recover the treated sequences.
+
+```{r}
+PosUTR <- PosSequences$sequence
+length(PosUTR)
+PosSequences_nodup <- PosSequences[-which(duplicated(PosUTR)),]
+PosUTR <- PosUTR[-which(duplicated(PosUTR))]
+length(PosUTR)
+
+NegUTR <- NegSequences$sequence
+length(NegUTR)
+NegSequences_nodup <- NegSequences[-which(duplicated(NegUTR)),]
+NegUTR <- NegUTR[-which(duplicated(NegUTR))]
+length(NegUTR)
+
+# Validation test
+test1 = all(NegSequences_nodup$sequence == NegUTR) 
+test2 = all(PosSequences_nodup$sequence == PosUTR)
+if (test1 == FALSE) print ("ERROR 1")
+if (test2 == FALSE) print ("ERROR 2")
+```
+
+Now we face an issue with our sequences. They are 808 characters long strings, but R sees them as indivisible elements, not as vectors of 808 elements. We have to transform them before working with them, turning each 808 characters long sequence into 808 sequences of only one character.
+
+```{r}
+posNum <- length(PosUTR) # Number of positive sequences
+SeqUTR <- append(PosUTR,NegUTR)
+
+old_seq = SeqUTR[1] # For validation tests
+
+n2 <- nchar(SeqUTR[1]) -1 # Number of divisions to make
+
+secuenciasOH <- sapply(1 + 1*0:n2, function(z) substr(SeqUTR, z, z))  # Obtaining the split characters
+df <- data.frame(secuenciasOH, "Value" = 0) # Saving them into a dataframe
+indx <- sapply(df, is.factor) 
+df[indx] <- lapply(df[indx], function(x) as.character(x)) # Factor --> char conversion
+
+df[1:posNum,]$Value <- 1 # We have the value of the positive sequences to positive
+
+table(df$Value)
+
+# Validation tests
+test1 = paste(unlist(secuenciasOH[1,]),sep="", collapse="") == old_seq; if (test1 == FALSE) print ("ERROR 1")
+test2 = table(df$Value)["0"] == length(NegUTR); if (test2 == FALSE) print ("ERROR 2")
+test3 = table(df$Value)["1"] == length(PosUTR); if (test3 == FALSE) print ("ERROR 3")
+test4 = all(length(PosUTR) + length(NegUTR) == length(SeqUTR), length(SeqUTR) == nrow(df)); if (test4 == FALSE) print ("ERROR 4")
+```
+
+Since we are going to train five different models, we will divide our data into five different dataframes. Each of them will have the same number of positive and negative sequences. Since we don't have many positive sequences, we will train every model with every positive sequences. This way, every model will be trained with the same set of positive sequences, but a different set of negative sequences.
+
+```{r, eval=FALSE}
+# Select all the negative sequences
+set.seed(1234)
+chosenSeqs <- sample(nrow(df) - posNum, size = posNum*5, replace = FALSE, prob = NULL) # Selected rows from 0 to max-posNum
+chosenSeqs <- chosenSeqs + posNum
+
+sets <- list()
+
+sets[[1]] <- 1:posNum
+sets[[2]] <- (posNum+1):(posNum*2)
+sets[[3]] <- ((posNum*2)+1):(posNum*3)
+sets[[4]] <- ((posNum*3)+1):(posNum*4)
+sets[[5]] <- ((posNum*4)+1):(posNum*5)
+
+```
+
+```{r, eval=FALSE}
+
+df.a <- df[c(1:posNum,chosenSeqs[sets[[1]]]),]
+df.b <- df[c(1:posNum,chosenSeqs[sets[[2]]]),]
+df.c <- df[c(1:posNum,chosenSeqs[sets[[3]]]),]
+df.d <- df[c(1:posNum,chosenSeqs[sets[[4]]]),]
+df.e <- df[c(1:posNum,chosenSeqs[sets[[5]]]),]
+
+dfs <- list(df.a, df.b, df.c, df.d, df.e) # 
+
+totalSeq = (nrow(df.a) + nrow(df.b) + nrow(df.c) + nrow(df.d) + nrow(df.e)) 
+length(SeqUTR) - totalSeq # Number of sequences that do not appear in the dataframes
+test1 = all(sapply(list(table(df.a$Value),table(df.b$Value), table(df.c$Value), table(df.d$Value)), function(x) x == table(df.e$Value)))
+test2 = table(df.a$Value)["0"] == posNum
+test3 = table(df.a$Value)["1"] == posNum
+if (test1) print ("Correct 1") else print ("ERROR 1")
+if (test2) print ("Correct 2") else print ("ERROR 2")
+if (test3) print ("Correct 3") else print ("ERROR 3")
+
+```
+
+Now we have to divide our data into Training and Test for our model training.
+
+```{r}
+
+output <- c("Value")
+trains <- list()
+tests <- list()
+usedForTrainPos <- list()
+usedForTrainNeg <- list()
+
+set.seed(1234)
+
+partitions <- createFolds(df[[output]], k=5)
+
+for (i in 1:5){
+  
+  trains <- append(trains, list(df[-partitions[[i]],])) # 28210
+  tests <- append(tests, list(df[partitions[[i]],])) # 7852
+  # Sum of both: 35262
+  
+  dfrows <- 1:(nrow(df))
+  fortrain <- dfrows[! dfrows %in% partitions[[i]]]
+  
+  partPos <- fortrain <= posNum
+  partNeg <- fortrain > posNum
+  partNeg <- partNeg - posNum 
+  
+  usedForTrainPos <- append(usedForTrainPos,list(unlist(partPos)))
+  usedForTrainNeg <- append(usedForTrainNeg,list(unlist(partNeg)))
+}
+# Validation test
+
+total = 0
+
+for (i in 1:5) {
+  total = total + nrow(trains[[i]]) + nrow(tests[[i]])
+}
+
+#test1 = total == totalSeq; if (test1 == FALSE) print ("ERROR 1")
+test2 = sum(duplicated(usedForTrainPos)) == 0; if (test2 == FALSE) print ("ERROR 2")
+test3 = sum(duplicated(usedForTrainNeg)) == 0; if (test3 == FALSE) print ("ERROR 3")
+
+#usedForTrainPos <- usedForTrainPos[-which(duplicated(usedForTrainPos))] # Only the positive genes could be duplicated
+
+```
+
+Now we check the type distribution of the non-3'UTR sequences. We are interested in distinguishing 3'UTR from ICE sequences. So, the desired output would be 0 in every subtype except for ICE.
+
+```{r}
+# Checking the type distribution of the train sets
+
+for (i in 1:5){
+  negtr <- usedForTrainNeg[[i]]
+ # print(min(negtr))
+ # print(max(negtr))
+  print(table(NegSequences_nodup$detailclass[negtr]))
+}
+
+
+```
+
+Once divided the data, we have to adapt the data to the format the model expects.
+
+```{r}
+train.x <- list()
+train.y <- list()
+
+test.x <- list()
+test.y <- list()
+
+for (i in 1:5){
+  train.x <- append(train.x, list(data.matrix(trains[[i]][,1:808])))
+  train.y <- append(train.y, list(data.matrix(trains[[i]][,809])))
+  
+  test.x <- append(test.x, list(data.matrix(tests[[i]][,1:808])))
+  test.y <- append(test.y, list(data.matrix(tests[[i]][,809])))
+
+  train.x[[i]] <- array_reshape(train.x[[i]], c(nrow(trains[[i]]),808,1))
+  test.x[[i]] <- array_reshape(test.x[[i]], c(nrow(tests[[i]]),808,1))
+ }
+```
+
+We have to prepare the dataframe that will contain the sequences and the output of the models.
+
+## Model 1
+
+```{r}
+# Next step is making a dataframe of every control gene and predicting positive or negative
+genesN <- NegSequences_nodup
+genesP <- PosSequences_nodup
+
+ ##### We have to make some transformations to these secuences
+
+n2 <- nchar(genesN$sequence[1]) - 1
+
+secuencesOH <- sapply(1 + 1*0:n2, function(z) substr(genesN$sequence, z, z))  
+dfn <- data.frame(secuencesOH, class=genesN$detailclass, id=genesN$id) 
+indx <- sapply(dfn, is.factor) 
+dfn[indx] <- lapply(dfn[indx], function(x) as.character(x))  #
+
+secuencesOH <- sapply(1 + 1*0:n2, function(z) substr(genesP$sequence, z, z))  
+dfp <- data.frame(secuencesOH, class=genesP$detailclass, id=genesP$id) 
+indx <- sapply(dfp, is.factor) 
+dfp[indx] <- lapply(dfp[indx], function(x) as.character(x))  
+
+# We have got a dataframe with the ensembl_id, sequence and hgnc symbol in genesP and genesN, and a dataframe with the split sequence and hgnc symbol in dfp and dfn
+
+finalSequencesN <- data.matrix(dfn[,1:808])
+finalSequencesN <- array_reshape(finalSequencesN,c(nrow(finalSequencesN),808,1))
+finalSequencesP <- data.matrix(dfp[,1:808])
+finalSequencesP <- array_reshape(finalSequencesP,c(nrow(finalSequencesP),808,1))
+
+genesP$model1 <- 0
+genesP$model2 <- 0
+genesP$model3 <- 0
+genesP$model4 <- 0
+genesP$model5 <- 0
+
+genesN$model1 <- 0
+genesN$model2 <- 0
+genesN$model3 <- 0
+genesN$model4 <- 0
+genesN$model5 <- 0
+
+```
+
+Now it is time to build our model. It follows the specifications mentioned in the thesis report. 
+
+```{r}
+  batch_size <- 125
+  epochs <- 25 
+  input_shape <- c(808,1)
+  learn_rate = 0.0001
+  
+  modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+   layer_dense(units = 18, activation = 'relu', input_shape = input_shape) %>% 
+    layer_dense(units = 1, activation="sigmoid") 
+    
+    summary(modelConvolu)
+  
+  modelConvolu %>% compile(
+    loss = loss_binary_crossentropy,
+    optimizer = optimizer_nadam(lr = learn_rate),
+    metrics = c('accuracy')
+  )
+```
+
+
+
+```{r, echo=FALSE}
+config = tensorflow::tf$ConfigProto(gpu_options = list(allow_growth = TRUE))
+sess = tensorflow::tf$Session(config = config)
+keras::k_set_session(session = sess)
+```
+
+And now we train that model with the data obtained. After each training epoch, we will obtain certain statistics related to the sensitivity and specificity of the model, since they are not metrics that Keras can return from the model.
+
+```{r}
+
+finaltrainsx <- list()
+finaltrainsy <- list()
+finaltestx <- list()
+finaltesty <- list()
+
+for (i in 1:5){
+  finaltrainsx <- append(finaltrainsx, list(sapply(trains[[i]], as.numeric)[,1:808]))
+finaltrainsy <- append(finaltrainsy, list(sapply(trains[[i]], as.numeric)[,809]))
+
+finaltestx <- append(finaltestx, list(sapply(tests[[i]], as.numeric)[,1:808]))
+finaltesty <- append(finaltesty, list(sapply(tests[[i]], as.numeric)[,809]))
+}
+
+
+
+```
+
+```{r}
+#with(tf$device("/device:GPU:0"), {
+predictions <- list()
+models <- list()
+all_history <- list()
+
+for (i in 1:5){
+  
+  sens <- NULL
+  spec <- NULL
+  history <- NULL
+ 
+  
+   modelConvolu <- keras_model_sequential()
+  modelConvolu %>% 
+    layer_dense(units = 18, activation = 'relu', input_shape =808) %>% 
+    layer_dense(units = 1, activation="sigmoid") 
+  
+  modelConvolu %>% compile(
+    loss = loss_binary_crossentropy,
+    optimizer = optimizer_nadam(lr = learn_rate),
+    metrics = c('accuracy')
+  )
+  
+    historial <- NULL
+  
+    for (epoch in 1:epochs){
+    historial <- modelConvolu %>% fit(
+      x = finaltrainsx[[i]],
+      y = finaltrainsy[[i]],
+      epochs = 1,  
+      batch_size = batch_size, 
+      validation_data = list(finaltestx[[i]], finaltesty[[i]]),
+      verbose = 2)
+    
+    history <- c(history, historial)
+    
+    }
+}
+
+#})
+```
+
+Lastly, we will plot the graphs showing the results of the training of this model.
+
+```{r, interpretandoDatos}
+nums <- NULL
+nums <- (1:(epochs))*2
+valaccs <- NULL
+accs <- NULL
+valoss <- NULL
+loss <- NULL
+for (i in nums){ 
+  valaccs <- c(valaccs,history[i]$metrics$val_acc) 
+  accs <- c(accs,history[i]$metrics$acc) 
+  loss <- c(loss,history[i]$metrics$loss) 
+  valoss <- c(valoss,history[i]$metrics$val_loss) 
+  }
+
+plot(valoss, ylim = c(min(valoss,loss), max(valoss,loss)), cex = 0, ylab="loss", xlab="epochs")
+lines(valoss, col="green")
+lines(loss, col="blue")
+legend("bottomleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+
+plot(valaccs, ylim = c(min(valaccs,accs), max(valaccs,accs)), cex = 0, ylab = "accuracy", xlab = "epochs")
+lines(valaccs, col="green")
+lines(accs, col="blue")
+legend("topleft", legend=c("training","validacion"), col=c("blue","green"), lty = 1)
+
+
+
+mean_acc = sum(tail(valaccs,n=7))/7 # Estimation of accuracy obtained
+mean_acc
+# 0.72999 con CBAXXX
+# 0.643932 con XXXABC
+
+```
+
+The results seem more than acceptable, with a relatively low loss, a very high accuracy almost reaching 0.95, and high sensitivity and specificity values.
+
+# Determining the relevances of the characters
+
+We will obtain the relevances of the characters of the sequences using the LRP algorithm. An in-depth explanation of said algorithm can be found in the thesis report.
+
+## LRP Pseudo-code
+
+With the exeption of the output layer, the relevance of each node j is equal to the sum of the relevances R(j<-k) for every node k in the last computed layer. For example, k might be the output node (the first layer we obtain the relevance of) and j might be any node from the dense layer, which is the second layer we compute.
+
+This R(j<-k) is equal to:
+
+$$R(j\leftarrow k) = \frac{Numerator(j,k)}{Denominator(j,k)}*R(k)$$
+
+- Numerator(j,k): The activation of the node k multiplied by the weight between the nodes j and k
+- Denominator(j,k): The summatory of the Numerators(n,k) for every node n in the same layer as j
+- R(k): The relevance obtained for the node k
+
+Here we provide a simple pseudo-code that may help in case these definitions are not totally clear:
+
+```{r, eval=FALSE}
+
+## Output Layer (Last layer)
+## Since there is only one node, and is the last layer, the relevance of the whole layer is equal to the activation of this node
+
+Relevance[["output"]] = activation of output_node
+
+## Dense Layer (Second-to-Last layer)
+
+For each dense_node in dense layer:
+  
+  numerator = (activation of the output_node) * (weight between the dense_node and the output_node)
+  denominator = summatory of ((activation of the output_node) * (weight between the dense_node and the output_node)) for all dense_nodes
+  
+  Relevance[["dense"]][dense_node] = (numerator/denominator) * (relevance of output_node)
+  
+## Convolution Layer (Second layer)
+  
+For each conv_node in convolution layer:
+  For each dense_node in dense_layer:
+    
+    numerator = (activation of the dense_node) * (weight between the conv_node and the dense_node)
+    denominator = summatory of ((activation of the dense_node) * (weight between the conv_node and the dense_node)) for all conv_nodes
+    
+    Relevance[["convolution"]][conv_node] += (numerator/denominator) * (relevance of dense_node)
+  
+## Input Layer (First layer)
+  
+For each conv_node in convolution_layer:
+  
+  inputs = input_nodes that the filter used to determine the activation of this conv_node 
+
+  For each input_node in inputs:
+      
+    numerator = (activation of the conv_node) * (weight between the input_node and the conv_node)
+    denominator = summatory of ((activation of the conv_node) * (weight between the input_node and the conv_node)) for all input_nodes
+    
+    Relevance[["input"]][input_node] += (numerator/denominator) * (relevance of conv_node)
+    Relevance[["times_used"]] += 1 # Counts the umber of times the input cell was used
+    
+return (Relevance)
+
+  
+
+}
+
+```
+
+## LRP Algorithm code
+
+This is the code for the LRP algorithm:
+
+```{r}
+lrp <- function(model, input){ # Asks for the model and the input sequence
+  layers <- model$layers # Gets the layers of the model
+  
+  ## STEP 1: CREATING DATA STRUCTURES
+  
+  activs <- list() # For the activations of the neurons
+  weights <- list() # For the weights of the connections
+
+  for (i in 1:length(layers)){ # For each layer, we will save all the activations of its neurons, and weights of its connections
+    lay <- layers[[i]]
+    layer_name <- lay$name
+    
+    intermediate_layer_model <- keras_model(inputs = modelConvolu$input,  
+                                      outputs = get_layer(modelConvolu, layer_name)$output) # Creates an incomplete model up to the selected layer
+    intermediate_output <- predict(intermediate_layer_model, array_reshape(input, c(1,808))) # Gets the output of that layer for the selected sequence
+    
+    if (length(lay$weights) > 0){ # If not a flatten layer (those do not have weights)
+      activs[[i]] <- intermediate_output # Saves the activations
+      weights[[i]] <- lay$get_weights()[[1]] # Saves the weights
+    }
+  }
+  
+  ## STEP 2: OUTPUT LAYER
+  
+  Rk <- list() # Rk will contain the relevances of the layers
+  Rk[["output"]] <- as.numeric(activs[[length(layers)]])  # For the output layer, the relevance is equal to the activation of the output node
+  if (Rk[["output"]] < 0.5) # If the output is lesser than 0.5 it means it is a negative sequence, and we have to compute the relevance towards the negative class
+    Rk[["output"]] <- 1 - Rk[["output"]]
+  
+  ## STEP 3: DENSE LAYER
+  
+  # First of all we have to turn all negative weights into zeroes, since we only use the positive weights with this formula
+  pos_weights <- weights[[2]]
+  for (i in 1:length(weights[[2]]))
+    pos_weights[i] <- max(weights[[2]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+  denom = 0 # Denominator of the formula
+  
+  for (i in 1:length(activs[[1]])) { # Calculating the denominator
+    value <- activs[[1]][i] * pos_weights[i]
+    denom <- denom + value
+  }
+  
+  for (i in 1:length(activs[[1]])) { # Calculating each numerator and, with it, the relevance of each neuron of the dense layer
+    numer <- activs[[1]][i] * pos_weights[i]
+    if (denom != 0) { # We do not want to divide by zero
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+    Rk[["dense"]][i] <- division * Rk[["output"]][1] 
+  }
+  
+  
+  ## STEP 5: INPUT LAYER
+  
+  # First of all we have to turn all negative weights into zeroes, since we only use the positive weights with this formula
+  pos_weights <- weights[[1]]
+  for (i in 1:length(weights[[1]]))
+    pos_weights[i] <- max(weights[[1]][i],0) # Not using the apply family functions so it does not alter the shape
+  
+  denom = 0 # Denominator of the formula
+  
+  for (i in 1:length(input)) { # Calculating the denominator
+    value <- input[i] * pos_weights[i]
+    denom <- denom + value
+  }
+  
+  for (i in 1:length(input)) { # Calculating each numerator and, with it, the relevance of each neuron of the dense layer
+    numer <- input[i] * pos_weights[i]
+    if (denom != 0) { # We do not want to divide by zero
+        division <- numer/denom
+      } else {
+        division <- 0
+      }
+    Rk[["input"]][i] <- division * Rk[["dense"]][1] 
+  }
+  
+  ## STEP 6: RETURNING RESULT
+  return(Rk[["input"]])
+    
+}
+```
+
+## Calculating the relevances of the sequences
+
+We now calculate the relevances for some sequences, and save them in a file. We separate positive from negative sequences since they will have different relevances.
+
+The original sequences have 250 characters (A, C, G, T) of length. Note that the sequences we trained, and whose relevance we are calculating, have 1250 characters. This is because these sequences were one-hot encoded, having 5 binary digits per each character of the original sequence. To calculate the relevance of each ACGT character, we just need to add the relevances of its 5 one-hot digits. The plots we will provide later will show the relevances of these 250 characters, not the 1250 binary digits.
+
+```{r}
+
+#PLAN:
+# Primero sacar las relevancias de la primera secuencia
+# Crear las columnas para todas sus relevancias (mirar la longitud)
+# Guardarnos la longitud de cada capa
+# Obtener los índices de la primera columna de cada capa
+# Guardamos todas las relevancias (una sola vez por capa, guardando de golpe desde el indice)
+# La capa de input hay que guardarla como lo hacemos ya que hay que sumar cada 5
+# Ojo que hay que normalizar la capa de input con el times-used
+
+relevancesP <- genesP
+relevancesN <- genesN
+
+posS <- df[df$Value == 1,] # Positive sequences
+negS <- df[df$Value == 0,] # Negative sequences
+
+for (i in 1:202){ # We create the empty list of relevances, that will later contain the relevances for the positions of the sequences
+  relevancesP[[paste0("relevance",i)]] <- 0 # Positive relevances
+  relevancesN[[paste0("relevance",i)]] <- 0 # Negative relevances
+}
+
+for (i in 1:100){ # For each sequence we want to calculate its relevance:
+  relevances <- lrp(modelConvolu, as.matrix(as.numeric(posS[i,1:808]))) # Apply the LRP algorithm and obtain the relevance of each one-hot digit
+  
+  for (j in 1:202){ # Since we want the relevances of the characters (250), not the one-hot digits (1250), we have to combine them
+    k = 1 + (4*(j - 1)) # j is the character, and k:(k+4) are its 5 one-hot digits
+    relevancesP[i,paste0("relevance", j)] <- relevances[k] + relevances[k + 1] + relevances[k + 2] + relevances[k + 3]
+  }
+  
+#  write.csv(relevancesP[1:i,],"../Results/posRelevances", row.names = FALSE)
+}
+
+for (i in 1:100){ # We do the same for the negative sequences
+  relevances <- lrp(modelConvolu, as.matrix(as.numeric(negS[i,1:808])))
+  
+  for (j in 1:202){
+    k = 1 + (4*(j - 1))
+    relevancesN[i,paste0("relevance", j)] <- relevances[k] + relevances[k + 1] + relevances[k + 2] + relevances[k + 3] 
+  }
+  
+#  write.csv(relevancesN[1:i,],"../Results/negRelevances", row.names = FALSE)
+}
+```
+
+```{r}
+plot(colSums(relevancesN[1:100,11:212])/100, type="l")
+
+plot(colSums(relevancesP[1:100,11:212])/100, type="l")
+```
+
+# Visualization of the results
+
+In this section we will visualize the relevances obtained from the LRP algorithm. We will provide multiple plots, showing relevances of positive and negative sequences, both individually (each sequence being a line inside the plot) and collectively (only one line in the plot, beign that line the mean of the sequences).
+
+First of all, we have to define a new function that will help us normalize our relevances so that we can compare the positive and negative sequences comfortably, since at the moment we are working with very small values. A more detailed explanation of relevances and how they work is explained in the thesis report.
+
+One important thing that we have to take into account is that not all sequences have the same combined relevance. The combined relevance of a sequence, even before normalization, varies from 0 to 1, depending on the output of the network for that combination of sequence and class. So, a sequence classified as 98% positive will have a total relevance of 0.98, but a sequence classified as 54% positive will have a total relevance of 0.54. That explains why some sequence lines can appear above or below in the graph.
+
+```{r}
+
+normalizeRelList <- function(listp, listn){ # This function is for lists of models
+  all_mx <- 0
+  all_mn <- 99999999
+  
+  for (i in 1:length(listp)){
+    mx <- max(listp[[i]])
+    mn <- min(listp[[i]])
+    
+    if (mx > all_mx) all_mx = mx
+    if (mn < all_mn) all_mn = mn
+  }
+  
+  for (i in 1:length(listn)){
+    mx <- max(listn[[i]])
+    mn <- min(listn[[i]])
+    
+    if (mx > all_mx) all_mx = mx
+    if (mn < all_mn) all_mn = mn
+  }
+  
+  for (i in 1:(length(listp))){ # Normalize using those highest and lowest values
+    listp[[i]] <- (listp[[i]] - all_mn) / (all_mx - all_mn)
+  }
+  
+  for (i in 1:(length(listn))){ # Normalize using those highest and lowest values
+    listn[[i]] <- (listn[[i]] - all_mn) / (all_mx - all_mn)
+  }
+  
+  return(list(listp,listn))
+}
+
+normalizeDF <- function(posdf, negdf){ # This function is for single models
+ mn <- min(posdf, negdf)
+ mx <- max(posdf, negdf)
+ 
+ posd <- (posdf - mn) / (mx - mn)
+ negd <- (negdf - mn) / (mx - mn)
+ 
+  return(list(posd, negd))
+}
+
+
+```
+
+## Loading the relevances of the five models
+
+Once defined the function, we load all the relevances we calculated previously. 
+
+We have to remember we used cross-validation to train the models, and, for that reason, we have 5 different models right now. Each model will have different relevances since they were trained with different sequences. So, we will load the relevances of each model.
+
+```{r}
+
+pos_rel <- list()
+for (i in 1:5)  # Loading the positive relevances
+{
+  rel_file = paste0("../Results/Relevances/posRelevancesModel",i)
+  pos_rel <- append(pos_rel, list(read.csv(rel_file, sep=",", stringsAsFactors = FALSE)[,11:212]))
+}
+
+neg_rel <- list()
+for (i in 1:5) # Loading the negative relevances
+{
+  rel_file = paste0("../Results/Relevances/negRelevancesModel",i)
+  neg_rel <- append(neg_rel, list(read.csv(rel_file, sep=",", stringsAsFactors = FALSE)[,11:212]))
+}
+
+```
+
+## Plotting the relevances of the five models
+
+Now that we have the relevances loaded, we will start with the data visualization. In all the plots we will show now, the x-axis will correspond to the position of the character, and the y-axis will be its relevance. For example, a point of X = 100 and Y = 0.3 means that the 100th character in the sequence had a normalized relevance of 0.3.
+
+The first five plots we will look at contains all the sequences of one of the five models in a single graph. We will paint the positive sequences in red, and the negative sequences in blue. Also, a dotted line represents the padding characters in a sequence, while a continuous line represents the useful characters (A,C,G,T). Later we will study the relevance of these characters more in depth.
+
+
+```{r, fig.show='hold', out.width='25%'}
+
+for (i in 1:5){ # One plot for every model
+  pr_norm <- pos_rel[[i]] # The positive and negative relevances of the current model
+  nr_norm <- neg_rel[[i]]
+  
+  plot(type="n", xlim <- c(1,202), c(min(pr_norm,nr_norm), max(pr_norm,nr_norm)), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main=paste0("Relevances of every positive and negative sequence in model number ",i))
+  for (j in 1:nrow(pr_norm)){
+    numX <- max(0, 202 - nchar(relevancesP$rawseq[j]))
+    
+    lines(colSums(pr_norm[j,1:(202-numX)]), col="blue") # In blue -> Relevances of CAGT
+  }
+  for (j in 1:nrow(pr_norm)){
+    numX <- max(0, 202 - nchar(relevancesP$rawseq[j]))
+    if(numX > 0)
+      lines(x = (202-numX):202, y = colSums(pr_norm[j,(202-numX):202]), col="blue", lty=2) # In red -> Relevances of X
+  }
+  
+  for (j in 1:nrow(nr_norm)){
+    numX <- max(0, 202 - nchar(relevancesN$rawseq[j]))
+    
+    lines(colSums(nr_norm[j,1:(202-numX)]), col="red") # In blue -> Relevances of CAGT
+  }
+  for (j in 1:nrow(pr_norm)){
+    numX <- max(0, 202 - nchar(relevancesN$rawseq[j]))
+    if(numX > 0)
+      lines(x = (202-numX):202, y = colSums(nr_norm[j,(202-numX):202]), col="red", lty=2) # In red -> Relevances of X
+  }
+  
+  legend("topright", legend=c("Positive", "Negative"),
+       col=c("blue", "red"), lty=1, cex=0.8)
+}
+
+
+```
+
+Looking at the plots above, it seems that the relevances obtained by the 5 models are very similar. We will compare them more clearly in the next two plots: one comparing the mean of the positive sequences of the five models, and one for the negative sequences.
+
+```{r}
+
+num_seq <- nrow(pos_rel[[1]])
+
+plot(type="n", xlim <- c(1,202), ylim <- c(min(as.data.frame(pos_rel)), max(as.data.frame(pos_rel))), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main="Mean relevances of positive sequences in models")
+lines(colSums(pos_rel[[1]])/num_seq, col="blue")
+lines(colSums(pos_rel[[2]])/num_seq, col="red")
+lines(colSums(pos_rel[[3]])/num_seq, col="orange")
+lines(colSums(pos_rel[[4]])/num_seq, col="black")
+lines(colSums(pos_rel[[5]])/num_seq, col="purple")
+
+legend("topright", legend=c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5"),
+       col=c("blue", "red", "orange", "black", "purple"), lty=1, cex=0.8)
+
+
+
+```
+
+Every model has a very similar distribution of relevances for their positive sequences. Now it is the turn of the negative sequences:
+
+```{r}
+
+num_seq <- nrow(neg_rel[[1]])
+
+plot(type="n", xlim <- c(1,202), ylim <-  c(min(as.data.frame(neg_rel)), max(as.data.frame(neg_rel))), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main="Mean relevances of negative sequences in models")
+lines(colSums(neg_rel[[1]])/num_seq, col="blue")
+lines(colSums(neg_rel[[2]])/num_seq, col="red")
+lines(colSums(neg_rel[[3]])/num_seq, col="orange")
+lines(colSums(neg_rel[[4]])/num_seq, col="black")
+lines(colSums(neg_rel[[5]])/num_seq, col="purple")
+
+legend("topright", legend=c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5"),
+       col=c("blue", "red", "orange", "black", "purple"), lty=1, cex=0.8)
+
+
+
+```
+
+In this case, there are only very minor differences, like at the very beginning or at the end of the sequence. Since the case of the positive sequence is more or less the same, we conclude that there is no need of using the 5 models for this, since in that case we would need to obtain the relevances fime times. Considering that LRP is kind of a slow algorithm, we have a lot of sequences to work with, and the differences in the relevances are almost negligible, we think that it is best to work with only one of those models.
+
+As for which model to select, we will just pick the 1st model, since they are all so similar it does not really matter.
+
+```{r}
+
+i = 1
+
+
+  pr_norm <- pos_rel[[i]] # The positive and negative relevances of the current model
+  nr_norm <- neg_rel[[i]]
+  
+  plot(type="n", xlim <- c(1,202), c(min(pr_norm,nr_norm), max(pr_norm,nr_norm)), xlab = "Position of the character in the sequence", ylab="Relevance of the character", main=paste0("Relevances of every positive and negative sequence in model number ",i))
+  for (j in 1:nrow(pr_norm)){
+    numX <- max(0, 202 - nchar(relevancesP$rawseq[j]))
+    
+    lines(colSums(pr_norm[j,1:(202-numX)]), col="blue") # In blue -> Relevances of CAGT
+  }
+  for (j in 1:nrow(nr_norm)){
+    numX <- max(0, 202 - nchar(relevancesN$rawseq[j]))
+    
+    lines(colSums(nr_norm[j,1:(202-numX)]), col="red") # In blue -> Relevances of CAGT
+  }
+
+  
+  legend("topright", legend=c("Positive", "Negative"),
+       col=c("blue", "red"), lty=1, cex=0.8)
+
+
+```
+
+There are a couple things that we would like to point out:
+
+- The red lines tend to be lower than the blue lines at the middle-to-end part of the sequences.
+- The relevances follow a similar distribution in both types of sequence, except at the very end
+
+These are interesting facts, but we need more than 20 sequences to study these cases, since they could be isolated ocurrences. We will load a second set of relevances, with 500 sequences instead of 20. This relevances have been calculated using the relevances from model 5.
+
+## Loading the relevances of more sequences
+
+```{r}
+pos_rel <- read.csv("../Results/Relevances/posRelevances", sep=",", stringsAsFactors = FALSE)[,12:213] #Antes era 213
+neg_rel <- read.csv("../Results/Relevances/negRelevances", sep=",", stringsAsFactors = FALSE)[,12:213]
+
+# Updating the dataframe that asigns relevances to sequences
+relevancesP[1:nrow(pos_rel),11:213] <- pos_rel
+relevancesN[1:nrow(neg_rel),11:213] <- neg_rel
+```
+
+Before plotting the relevances again, we will show the distribution of total relevance of the sequences. We want to work only with those sequences with 0.95 total relevance or more, since they are the most representative sequences.
+
+Since the total relevance of the sequence is equivalent to the output of the network, we will use that to know which sequences to use. We only need to check the "model1" attribute of the dataframe, containing said output of the first model for that sequence. Remember that we are only working with the 1st network, not with the five of them.
+
+```{r, fig.show='hold', out.width='50%'}
+
+library(gridExtra)
+
+ggplot(data = relevancesP, aes(x = model1)) + 
+  geom_density() +  
+  labs(title = "Total relevances of positive sequences") + 
+  labs(y = "Density") + 
+  labs(x = "Total relevance") +
+  theme_bw()
+
+ggplot(data = relevancesN, aes(x = 1 - model1)) + 
+  geom_density() +  
+  labs(title = "Total relevances of negative sequences") + 
+  labs(y = "Density") + 
+  labs(x = "Total relevance") + 
+  theme_bw()
+
+```
+
+We can see that the absolute majority of sequences have a total relevance of almost 1. We can simply plot the number of sequences of relevance <0.95 versus the number of sequences with total relevance above that number.
+
+```{r, fig.show='hold', out.width='50%'}
+library(ggthemes)
+
+ggplot(relevancesP, aes(model1 > 0.95)) +
+  geom_bar(aes(fill = (model1 > 0.95))) + 
+  labs(title="Positive sequences", x = ">0.95 Total relevance", y="Number of sequences", fill="Total relevance >0.95") +
+  theme_bw()
+
+ggplot(relevancesN, aes((1 - model1) > 0.95)) +
+  geom_bar(aes(fill = ((1 - model1) > 0.95))) + 
+  labs(title="Negative sequences", x = ">0.95 Total relevance", y="Number of sequences", fill="Total relevance >0.95") +
+  theme_bw()
+
+
+```
+
+As we thoutgh, the vast majority of sequences have a relevance higher than 0.95. But since not all of them are above this threshold, we will remove those who are not so that we will only work with those sequences that are truly trustworthy.
+
+```{r}
+# Filtering those sequences with total relevances lower than 0.95
+pos_rel_best <- pos_rel[relevancesP$model1[1:nrow(pos_rel)] > 0.95,]
+neg_rel_best <- neg_rel[(1 - relevancesN$model1[1:nrow(neg_rel)]) > 0.95,]
+
+```
+
+We will check that all these sequences have total relevances greater than 0.95. We will also select only those sequences whose relevance we know:
+
+```{r, fig.show='hold', out.width='50%'}
+
+relevancesP_best <- relevancesP[1:nrow(pos_rel),][relevancesP$model1[1:nrow(pos_rel)] > 0.95,]
+relevancesN_best <- relevancesN[1:nrow(neg_rel),][(1 - relevancesN$model1[1:nrow(neg_rel)]) > 0.95,]
+
+ggplot(relevancesP_best, aes(model1 > 0.95)) +
+  geom_bar(aes(fill = (model1 > 0.95))) + 
+  labs(title="Positive sequences", x = ">0.95 Total relevance", y="Number of sequences", fill="Total relevance >0.95") +
+  theme_bw()
+
+ggplot(relevancesN_best, aes((1 - model1) > 0.95)) +
+  geom_bar(aes(fill = ((1 - model1) > 0.95))) + 
+  labs(title="Negative sequences", x = ">0.95 Total relevance", y="Number of sequences", fill="Total relevance >0.95") +
+  theme_bw()
+
+
+```
+
+And now we can do the relevance plot again, but this time with more sequences.
+
+```{r}
+
+pos_norm <- pos_rel_best
+neg_norm <- neg_rel_best
+
+plot(type="n", xlim <- c(1,202), c(min(pos_norm, neg_norm), max(pos_norm, neg_norm)), xlab = "Position of the character in the sequence", ylab="Relevance of the character")
+
+  
+  for (j in 1:nrow(pos_norm)){
+    numX <- max(0, 202 - nchar(relevancesP$rawseq[j]))
+    
+    lines(colSums(pos_norm[j,1:(202-numX)]), col="blue") # In blue -> Relevances of CAGT
+  }
+  for (j in 1:nrow(neg_norm)){
+    numX <- max(0, 202 - nchar(relevancesN$rawseq[j]))
+    
+    lines(colSums(neg_norm[j,1:(202-numX)]), col="red") # In blue -> Relevances of CAGT
+  }
+legend("topright", legend=c("Positive", "Negative"),
+       col=c("blue", "red"), lty=1, cex=0.8)
+
+```
+
+## More relevance representations
+
+We can see that this last plot is very difficult to interpret, due to the high density of lines. For that reason, we have to think of an alternative representation. 
+
+Instead of showing every line in the plot, we will work with the means of the sequence. This way, we will have only two lines: One for the positive sequences, and one for the negative.
+
+```{r}
+
+mean_pos_norm <- colSums(pos_norm)/nrow(pos_norm)
+mean_neg_norm <- colSums(neg_norm)/nrow(neg_norm)
+
+plot(type="n", xlim <- c(1,202), c(min(mean_pos_norm, mean_neg_norm), max(mean_pos_norm, mean_neg_norm)), xlab = "Position of the character in the sequence", ylab="Mean relevance of the character")
+lines(mean_pos_norm, col="blue")
+lines(mean_neg_norm, col="red")
+legend("topright", legend=c("Positive", "Negative"),
+       col=c("blue", "red"), lty=1, cex=0.8)
+
+
+```
+
+As we can see more clearly now, the pattern is very similar in both types of sequence, though the negative sequences tend to have lower relevances at the beginning and higher at the end. This confirms one of our questions from before (both types having similar distributions). The question of wether negative sequences had lower relevances at the end of the sequence can be answered as well looking at this plot: They do not, so we will conclude that it only happenned in those first 20 sequences.
+
+Next, we will plot the difference between negatives and positives, and will compare it to the sum of relevances. This is what we are looking for:
+
+- A high difference in relevances means it is an area of interest for that type of sequence
+- A high sum of relevanes means it is a general area of interest
+
+```{r}
+
+smooth_curve <- function(curve, window){
+  window_size <- (2*window)+1
+  smoothed <- curve
+  
+  for (i in (window+1):(length(curve)-window)){
+    
+    sum <- 0
+    for (j in (i - window):(i + window)){
+      sum = sum + curve[j]
+    }
+    
+    smoothed[i] <- (sum/window_size)
+    
+  }
+  return (smoothed)
+}
+
+```
+
+```{r}
+
+mean_difference <- mean_pos_norm - mean_neg_norm
+mean_difference <- smooth_curve(mean_difference,3)
+
+mean_sum <- (mean_pos_norm + mean_neg_norm) / 2
+mean_sum <- smooth_curve(mean_sum,3)
+
+df <- data.frame(mdiff <- mean_difference, msum <- mean_sum)
+
+ggplot(df, aes(x = 1:nrow(df), y = mdiff)) + 
+  geom_line( aes(col="Value of mean difference")) + 
+  geom_line( aes(y = msum, col="Value of mean sum")) +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = mean(df[,2])) +
+  labs(x = "Number of the character", y="Difference", title="Value of mean positive relevance minus mean negative relevance", color="") + 
+  theme_bw()
+
+
+```
+
+The blue line represents the sum of the positive and negative relevances, and the salmon colored one shows the difference between positive relevances and negative relevances. The upper horizontal black line shows the mean of the sum of relevances, and the lower one is zero. 
+
+That means that areas of the blue line above the upper black line are general areas of interest. As for the salmon line, areas above the zero line are areas where there are higher positive relevances, and areas below the zero line are more relevant for the negative sequences.
+
+Ideally we are looking for areas where the salmon line goes below or above zero (the direction does not really matter) and where the blue line goes above the upper black line. Those areas would be the most relevant areas of the sequences.
+
+```{r}
+
+positive_relevance <- sum(mean_pos_norm)
+negative_relevance <- sum(mean_neg_norm)
+relevance_comparison = data.frame(Relevances = c(positive_relevance, negative_relevance), Source = c("Positive", "Negative"), stringsAsFactors = FALSE)
+
+ggplot(relevance_comparison, aes(x = Source, y = Relevances)) +
+  geom_bar(stat="Identity", fill="steelblue") + 
+  geom_text(aes(label=Relevances), vjust=-0.3, size=3.5)+
+  labs(x="Type of Sequence", title="Comparison of mean total relevances", y="Relevance") +
+  theme_bw()
+
+```
+
+The total relevance of the mean of both sequences is more or less the same, as seen in this plot. This means that the areas were the positive sequences have more relevance compensate those in which the negative sequences have the higher value. But since the total relevance only depends on the output ot the network for that particular sequence, we can only conclude that the network had similar results evaluating sequences of each type.
