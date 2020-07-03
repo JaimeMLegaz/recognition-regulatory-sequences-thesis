@@ -18,10 +18,4 @@ The Markdowns are named with this convention: "experiment"\_"step". For example,
 
 The Markdowns should be executed in this order: ObtainSequences -> TreatingSequences -> TrainNetwork, since the first two generate important data required for the next one. That data can be found partially in the folders of this project that refer to these three experiments. Since GitHub doesn't let us to upload files bigger than 25MB, some files couldn't be uploaded. This, however, should not be ever a problem if you just execute the Markdowns in the recomended order, since you will be generating those files.
 
-## Already generated HTML Markdowns
-
-We took the liberty of generating all the HTML documents that show the result of the markdowns. This way, these scripts would only need to be executed if you want to check if the work is legit or are interested on modifying the parameters used.
-
-These HTML documents can be found in the HTML Markdowns folder.
-
 
