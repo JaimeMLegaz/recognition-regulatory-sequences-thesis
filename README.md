@@ -21,6 +21,10 @@ The Markdowns are named with this convention: "experiment"\_"step". For example,
 
 The Markdowns should be executed in this order: ObtainSequences -> TreatingSequences -> TrainNetwork, since the first two generate important data required for the next one. That data can be found partially in the folders of this project that refer to these three experiments. Since GitHub doesn't let us to upload files bigger than 25MB, some files couldn't be uploaded. This, however, should not be ever a problem if you just execute the Markdowns in the recomended order, since you will be generating those files.
 
+## Further details
+
+Both thesis that work with this project can be found in the directory "Documentation". The BSc document refers to the original version of the project, and can be outdated, but it is the one that describes more in depth the reasoning behind this whole idea. The MSc project is more up-to-date, but does not describe the idea with as much detail as the other document.
+
 ## Credits
 
 Author: Jaime Martínez Legaz
