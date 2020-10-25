@@ -60,8 +60,8 @@ UTRSequences$X5utr[1]  # The UTR sequence, trimmed to be 250 characters long
 nchar(UTRSequences$X5utr[1])  # Length of said UTR sequence
 
 # to_onehot:   TGCCAA --> 0001000100010001000010000    (A = 10000, C = 01000, G = 00100, T = 00010, X = 00001)
-PromSequences$coding_gene_flank <- to_onehot(PromSequences$coding_gene_flank)
-UTRSequences$X5utr <- to_onehot(UTRSequences$X5utr)
+PromSequences$coding_gene_flank <- padding_onehot(PromSequences$coding_gene_flank)
+UTRSequences$X5utr <- padding_onehot(UTRSequences$X5utr)
 
 PromSequences$coding_gene_flank[1]  # The promoter sequence, once reversed and one-hot encoded
 UTRSequences$X5utr[1]  # The UTR sequence, once reversed, trimmed and one-hot encoded

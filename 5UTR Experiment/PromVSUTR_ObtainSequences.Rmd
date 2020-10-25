@@ -38,7 +38,7 @@ Some of this sequences appear as unavailable. We have to remove those rows, and 
 PromSequences <- PromSequences[-which(PromSequences$coding_gene_flank == "Sequence unavailable"),]
 UTRSequences <- UTRSequences[-which(UTRSequences$`5utr` == "Sequence unavailable"),]
 
-PromSequences <- PromSequences[-which(nchar(PromSequences$coding_gene_flank) != 250),]
+#PromSequences <- PromSequences[-which(nchar(PromSequences$coding_gene_flank) != 250),]
 UTRSequences <- UTRSequences[-which(nchar(UTRSequences$`5utr`) < 250),]
 ```
 
