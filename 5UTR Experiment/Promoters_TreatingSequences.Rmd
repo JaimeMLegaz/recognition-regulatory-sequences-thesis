@@ -53,8 +53,8 @@ PosSequences$coding_gene_flank[1]  # The positive sequence, once reversed
 NegSequences$coding_gene_flank[1]  # The negative sequence, once reversed
 
 # to_onehot:   TGCCAA --> 0001000100010001000010000    (A = 10000, C = 01000, G = 00100, T = 00010, X = 00001)
-PosSequences$coding_gene_flank <- to_onehot(PosSequences$coding_gene_flank)
-NegSequences$coding_gene_flank <- to_onehot(NegSequences$coding_gene_flank)
+PosSequences$coding_gene_flank <- padding_onehot(PosSequences$coding_gene_flank)
+NegSequences$coding_gene_flank <- padding_onehot(NegSequences$coding_gene_flank)
 
 PosSequences$coding_gene_flank[1]  # The positive sequence, once reversed and one-hot encoded
 NegSequences$coding_gene_flank[1]  # The negative sequence, once reversed and one-hot encoded

@@ -8,7 +8,7 @@ output:
 
 ## Initial notes
 
-This evaluation only modifies the third part of the experiment, the training. But, since it needs some data from the first part, and R has some problems writing and reading .csv files containing very big numbers (such us our treated sequences), we will have to do the three steps in the same file for it to work properly.
+This Markdown contains the three steps of the experiment all together: obtainment of sequences, their treatment, and the training of the network. It modifies the training section of the experiment to 
 
 ## Loading the libraries
 
