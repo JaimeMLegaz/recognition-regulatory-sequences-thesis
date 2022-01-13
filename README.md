@@ -30,4 +30,4 @@ Both thesis that work with this project can be found in the directory "Documenta
 ## Credits
 
 Author: Jaime Martínez Legaz
-Suervisor: Juan Antonio Botía Blaya
+Supervisor: Juan Antonio Botía Blaya
