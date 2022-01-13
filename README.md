@@ -1,6 +1,6 @@
 # Deep recognition of regulatory sequences
 
-This project studies of the relevance of DNA sequences for gene classification and disease association and develops a metodology for it. It tries to find whether or not DNA sequences can help us classify genes into certain groups, or ascertain their association with a disease. Here you can find the Markdown scripts that were used in order to work in this thesis and generate the results that appear in it.
+This project studies the relevance of DNA sequences for gene classification and disease association and develops a metodology for it. It tries to find whether or not DNA sequences can help us classify genes into certain groups, or ascertain their association with a disease. Here you can find the Markdown scripts that were used in order to work in this thesis and generate the results that appear in it.
 
 In this project, we study two different cases: The first one tries to associate genes with the Intellectual Disability, while the second one tries to classify genes as 3'UTR or non-3'UTR (3'UTR is one of the regions of the human genome, whose genes possess certain characteristics that makes them different).
 
